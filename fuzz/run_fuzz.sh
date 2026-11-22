@@ -131,7 +131,18 @@ verdict() { # verdict EXIT VERDICT DETAIL
     '(if $draft != "" then {draft:$draft} else {} end) + {lang:$lang, verdict:$v, exit:$e, detail:$d, target:$t, runs:$runs, max_total_time:$secs, impl_dir:$impl,
       corpus:$corpus, lock_digest:$lock, campaign_seconds:$el, mismatch:$mm, artifact:$art, stats:$stats,
       vendored:$vend, classes:$cls, evm:$evm, limits:$lim, slow_units:($slow | split(" ") | map(select(. != "")))}' \
-    > "$RUN/fuzz.json"
+    > "$RUN/fuzz.json.tmp"
+  # The record is part of the verdict: unless it was written completely (jq succeeded, the file is not
+  # empty and has a verdict), the run is ERROR whatever the verdict would have been.
+  local jrc=$?
+  if [ $jrc -ne 0 ] || [ ! -s "$RUN/fuzz.json.tmp" ] || ! jq -e '.verdict' "$RUN/fuzz.json.tmp" > /dev/null 2>&1; then
+    echo "ERROR: fuzz.json could not be written (jq exit $jrc); the intended verdict was $v (exit $1): $3" >&2
+    rm -f "$RUN/fuzz.json.tmp"
+    printf '{"verdict": "ERROR", "exit": 3, "detail": "fuzz.json could not be written (jq exit %s)"}\n' "$jrc" > "$RUN/fuzz.json"
+    note "fuzz verdict ERROR (exit 3): fuzz.json not written (intended $v)"
+    exit 3
+  fi
+  mv "$RUN/fuzz.json.tmp" "$RUN/fuzz.json"
   note "fuzz verdict $v (exit $1): $3"
   exit "$1"
 }

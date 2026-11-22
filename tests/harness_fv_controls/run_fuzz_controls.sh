@@ -28,6 +28,9 @@
 #                 ERROR before any build; max_len = 300 with len_control = 0 reaches the campaign
 #                 (libFuzzer status lines show "lim: 300") and is recorded in fuzz.json .limits, while a
 #                 run without them (c1) records null.
+#   c48_record_failure  the fuzz.json record is part of the verdict: with the writer's jq failing, a run
+#                 that would PASS and one that would FAIL each end ERROR (exit 3), never 0 or 1
+#                 (tests/harness_fv_controls/c48_record_failure.sh).
 #   c30_draft_not_countable  a draft (an UNSIGNED spec_lock.sh manifest) can be validated with
 #                 run_fuzz.sh --draft but never counts: (a) the --draft run is stamped "DRAFT (unsigned, not
 #                 countable)" first in fuzz.log and fuzz.json, its verdict reads "DRAFT PASS", and the
@@ -244,4 +247,6 @@ if [ -z "$bad32" ] && [ $src -eq 0 ] && jq -e '.verdict == "PASS" and .limits.ma
 else
   echo "c32_len_limits WRONG refused-bad=[${bad32:-ok}] set: exit=$src $(jq -c '{verdict, limits}' "$j32" 2>/dev/null) c1: $(jq -c '.limits | {max_len, len_control}' "$OUT/c1_fuzz/run/fuzz.json" 2>/dev/null)"; fails=1
 fi
+"$ROOT/tests/harness_fv_controls/c48_record_failure.sh" "$ROOT/fuzz/run_fuzz.sh" "${OUT:?}/c48" > "$OUT/c48.out" 2>&1 || fails=1
+grep -E '^c48_record_failure ' "$OUT/c48.out" || { echo "c48_record_failure WRONG no verdict line (see $OUT/c48.out)"; fails=1; }
 exit $fails
