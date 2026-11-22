@@ -24,6 +24,10 @@
 #                 contain the classify build (nm: no fv_classify_build_marker), the classify binary must.
 #   c14_zero_limits   fv.toml timeout / rss_limit_mb / malloc_limit_mb = 0 (libFuzzer: "no limit"):
 #                 each must be refused with ERROR (exit 3) before anything is built.
+#   c32_len_limits  fv.toml [fuzz] max_len / len_control: max_len = 0 and len_control = -1 are each
+#                 ERROR before any build; max_len = 300 with len_control = 0 reaches the campaign
+#                 (libFuzzer status lines show "lim: 300") and is recorded in fuzz.json .limits, while a
+#                 run without them (c1) records null.
 #   c30_draft_not_countable  a draft (an UNSIGNED spec_lock.sh manifest) can be validated with
 #                 run_fuzz.sh --draft but never counts: (a) the --draft run is stamped "DRAFT (unsigned, not
 #                 countable)" first in fuzz.log and fuzz.json, its verdict reads "DRAFT PASS", and the
@@ -217,5 +221,27 @@ if [ ! -e "$D30/draft.sha256.sig" ] && [ $ra -eq 0 ] && [ "$(jq -r 'keys_unsorte
   echo "c30_draft_not_countable OK --draft: \"$(jq -r .verdict "$ja")\" (first key draft, fuzz.log line 1 DRAFT, corpus $n0 -> $n1 files); same manifest without --draft: BLOCKED; task: SPEC_LOCK -> BLOCKED; CLOSE on a draft fuzz.json: ERROR, no closure"
 else
   echo "c30_draft_not_countable WRONG draft exit=$ra verdict=$(jq -r .verdict "$ja" 2>/dev/null) first_key=$(jq -r 'keys_unsorted[0]' "$ja" 2>/dev/null) corpus $n0->$n1; signed-path exit=$rb; task rc=$rc_c state=$st_c; close rc=$rc_d state=$st_d closure=$cl_d"; fails=1
+fi
+
+D32="$OUT/c32"; rm -rf "$D32"; mkdir -p "$D32"; bad32=""
+for kv in "max_len = 0" "len_control = -1"; do
+  k=${kv%% *}; Z="$D32/$k"; mkdir -p "$Z"; cp -r "$ROOT/fixtures/conservation_cpp/." "$Z/ex"
+  printf '[fuzz]\n%s\n' "$kv" > "$Z/ex/fuzz/fv.toml"
+  "$ROOT/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$Z/ex/fuzz" --target diff_transfer \
+    --corpus "$Z/corpus" --no-merge --out "$Z/run" > "$Z/run_fuzz.out" 2>&1; zrc=$?
+  if [ $zrc -ne 3 ] || ! jq -e --arg k "$k" '.verdict == "ERROR" and (.detail | contains($k))' "$Z/run/fuzz.json" > /dev/null \
+     || [ -d "$Z/run/build" ]; then bad32+="$k(exit=$zrc) "; fi
+done
+Z="$D32/set"; mkdir -p "$Z"; cp -r "$ROOT/fixtures/conservation_cpp/." "$Z/ex"; printf '[fuzz]\nmax_len = 300\nlen_control = 0\n' > "$Z/ex/fuzz/fv.toml"
+cp -r "$CPP/corpus" "$Z/corpus"
+"$ROOT/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$Z/ex/fuzz" --target diff_transfer \
+  --corpus "$Z/corpus" --no-merge --runs 3000 --out "$Z/run" > "$Z/run_fuzz.out" 2>&1; src=$?
+j32="$Z/run/fuzz.json"
+if [ -z "$bad32" ] && [ $src -eq 0 ] && jq -e '.verdict == "PASS" and .limits.max_len == 300 and .limits.len_control == 0' "$j32" > /dev/null \
+   && grep -q 'lim: 300' "$Z/run/campaign.log" && ! grep -q -- '-max_len is not provided' "$Z/run/campaign.log" \
+   && jq -e '.limits.max_len == null and .limits.len_control == null' "$OUT/c1_fuzz/run/fuzz.json" > /dev/null; then
+  echo "c32_len_limits OK max_len=0, len_control=-1: ERROR before build; max_len=300 len_control=0: campaign at lim 300, recorded $(jq -c '.limits | {max_len, len_control}' "$j32"); c1 records null"
+else
+  echo "c32_len_limits WRONG refused-bad=[${bad32:-ok}] set: exit=$src $(jq -c '{verdict, limits}' "$j32" 2>/dev/null) c1: $(jq -c '.limits | {max_len, len_control}' "$OUT/c1_fuzz/run/fuzz.json" 2>/dev/null)"; fails=1
 fi
 exit $fails

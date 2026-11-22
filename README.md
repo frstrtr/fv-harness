@@ -57,6 +57,7 @@ before this repository's single root commit.
 | `fuzz/LeanOracle.cmake` | `lean_oracle_library()` and `add_diff_fuzzer()` CMake functions |
 | `fuzz/run_fuzz.sh` | COUPLE stage: lock check, oracle build, corpus replay, campaign, corpus merge |
 | `tests/harness_fv_controls/` | Acceptance controls (spec §4) |
+| `tests/harness_fv_controls/` | Acceptance controls (spec §4) and their logs. Hosted CI runs the gate and C++ controls; the language controls (c15–c29) SKIP there and are verified on a gate host, not in CI (`docs/LANGUAGES.md`) |
 | `scripts/lean_lsp_mcp.sh`, `scripts/preflight_lake_build.sh` | Module 1: sandboxed lean-lsp MCP server; pre-flight build |
 | `prover/` | Module 3: Tier-2 endpoint (`tier2_server.sh`) and `dispatch_local_prover` (`dispatch.sh`) |
 | `config/tier2.env` | Tier-2 endpoint and server settings (the endpoint is config only) |

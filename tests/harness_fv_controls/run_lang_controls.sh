@@ -21,7 +21,8 @@
 #   c25_evm_clean      the correct contract (solc 0.8.39, in-process EVM), with fv.toml pinning its
 #                      runtime bytecode sha256: PASS; fuzz.json records the pinned solc sha256; the
 #                      outcome classes include submit reverting LimitExceeded() and none is NOT EXERCISED
-#   c26_evm_drift      a reduction one unit short: FAIL "oracle/implementation mismatch" within 10 s
+#   c26_evm_drift      a reduction one unit short: FAIL "oracle/implementation mismatch" within 50,000
+#                      executions (60 s wall cap; the EVM path is slower than native, see the block)
 #   c27_evm_overflow   (a) pos + open + q in checked uint64 arithmetic reverts with Panic(0x11) where
 #                      the model rejects: FAIL mismatch showing "panic 0x11"; (b) the same test inside
 #                      unchecked {} wraps and accepts: FAIL mismatch
@@ -208,13 +209,17 @@ if [ $rc -eq 0 ] && [ "$(jq -r .verdict "$j")" = PASS ] && [ "$(jq -r .evm.solc_
 else
   echo "c25_evm_clean WRONG exit=$rc $(jq -c '{verdict, detail, evm: (.evm | {solc_sha256, runtime_sha256}), not_exercised: .classes.not_exercised, cls_error: .classes.error}' "$j" 2>/dev/null)"; fails=1
 fi
-FV_NO_CLASSIFY=1 lang_campaign c26_evm_drift evm "$X" contract-drift --time 10
+# The EVM path runs about 10-20x fewer inputs per second than native code under ASan, and that rate
+# depends on the host. The criterion is therefore the number of EXECUTIONS before the drift is found
+# (<= 50,000; observed 5,000-8,000), with a 60 s wall cap, not the 10 s used for native targets.
+FV_NO_CLASSIFY=1 lang_campaign c26_evm_drift evm "$X" contract-drift --time 60
 rc=$?; j="$OUT/c26_evm_drift/run/fuzz.json"; t=$(jq -r '.campaign_seconds // ""' "$j" 2>/dev/null)
+n=$(grep -m1 -oE 'stat::number_of_executed_units: *[0-9]+' "$OUT/c26_evm_drift/run/campaign.log" 2>/dev/null | grep -oE '[0-9]+$')
 if [ $rc -eq 1 ] && jq -e '.detail | contains("oracle/implementation mismatch")' "$j" > /dev/null \
-   && { [ -z "$t" ] || [ "$(echo "$t < 10" | bc)" = 1 ]; }; then
-  echo "c26_evm_drift OK FAIL after ${t:-replay} s (limit 10 s)"
+   && { [ -z "$t" ] || { [ -n "$n" ] && [ "$n" -le 50000 ]; }; }; then
+  echo "c26_evm_drift OK FAIL after ${n:-replay} executions, ${t:-0} s (limits 50,000 executions, 60 s)"
 else
-  echo "c26_evm_drift WRONG exit=$rc $(jq -c '{verdict, detail, campaign_seconds}' "$j" 2>/dev/null)"; fails=1
+  echo "c26_evm_drift WRONG exit=$rc executions=${n:-?} $(jq -c '{verdict, detail, campaign_seconds}' "$j" 2>/dev/null)"; fails=1
 fi
 FV_NO_CLASSIFY=1 lang_campaign c27_evm_overflow evm "$X" contract-overflow --time 10
 rca=$?; ja="$OUT/c27_evm_overflow/run/fuzz.json"
@@ -246,14 +251,16 @@ if [ -n "$eid" ] && [ $rc0 -eq 0 ] && [ $rca -eq 1 ] && jq -e '.verdict == "FAIL
 else
   echo "c28_evm_vendored_tamper WRONG pin=${eid:-none} untampered_rc=$rc0 tampered exit=$rca [$(jq -r .detail "$ja" 2>/dev/null)] own-target exit=$rcb [$(jq -r .detail "$jb" 2>/dev/null)]"; fails=1
 fi
-B29="$OUT/c29_solc"; mkdir -p "$B29"; cp "$SOLC" "$B29/solc"; printf '\0' >> "$B29/solc"
+B29="$OUT/c29_solc"; mkdir -p "$B29"; rm -f "$B29/solc"; cp "$SOLC" "$B29/solc"; chmod u+w "$B29/solc"; printf '\0' >> "$B29/solc"
+c29_setup_ok=1  # the copy must really differ from the pinned build, or this leg proves nothing
+[ "$(sha256sum < "$B29/solc" | cut -d' ' -f1)" != "$FV_SOLC_SHA256" ] || { c29_setup_ok=0; echo "c29 setup: the modified solc copy still has the pinned sha256" >&2; }
 FV_SOLC="$B29/solc" FV_NO_CLASSIFY=1 lang_campaign c29_evm_solc evm "$X" contract --time 10
 rca=$?; ja="$OUT/c29_evm_solc/run/fuzz.json"
 E29="$OUT/c29_ex"; rm -rf "$E29"; cp -r "$X" "$E29"
 printf 'expect_runtime_sha256 = "%064d"\n' 0 >> "$E29/fuzz/fv.toml"
 FV_NO_CLASSIFY=1 lang_campaign c29b_evm_runtime evm "$E29" contract --time 10
 rcb=$?; jb="$OUT/c29b_evm_runtime/run/fuzz.json"
-if [ $rca -eq 3 ] && jq -e '.detail | contains("not the pinned build")' "$ja" > /dev/null && [ ! -d "$OUT/c29_evm_solc/run/evm" ] \
+if [ "$c29_setup_ok" = 1 ] && [ $rca -eq 3 ] && jq -e '.detail | contains("not the pinned build")' "$ja" > /dev/null && [ ! -d "$OUT/c29_evm_solc/run/evm" ] \
    && [ $rcb -eq 2 ] && jq -e '.verdict == "BLOCKED" and (.detail | contains("expect_runtime_sha256"))' "$jb" > /dev/null \
    && [ ! -d "$OUT/c29b_evm_runtime/run/cargo-target" ]; then
   echo "c29_evm_pins OK other solc: ERROR before compiling; runtime bytecode not the expected one: BLOCKED before any fuzzer build"

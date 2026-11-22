@@ -7,6 +7,12 @@ therefore be the side under test. The gate (AUDIT) is the same for every languag
 is only the COUPLE step: how the oracle is linked, which fuzzer drives inputs, and which sanitizers
 watch the implementation.
 
+**What hosted CI covers.** The repository's workflow (`.github/workflows/controls.yml`) installs
+only the C++ toolchain. It runs the gate controls and the C++ fuzz controls (c1–c14, c20, c30).
+The language controls c15–c29 (Rust, Python, EVM) report **SKIP** there, because their toolchains
+are not installed. Their evidence is a run on a gate host that has all three toolchains
+(`tests/harness_fv_controls/evidence/`). They are not CI-verified.
+
 `fuzz/run_fuzz.sh --lang cpp|rust|python|evm` selects the build. The replay, campaign, merge, reproducers,
 verdict codes and the edge-case classification replay stay the same wherever the fuzzer speaks
 libFuzzer's command line.

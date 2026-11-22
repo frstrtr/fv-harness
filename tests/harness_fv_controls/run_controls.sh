@@ -162,7 +162,7 @@ while read -r id res detail; do
 done < "$OUT/fuzz.out"
 grep -qE "^c1_fuzz " "$OUT/fuzz.out" && grep -qE "^c6_cpp_drift " "$OUT/fuzz.out" && grep -qE "^c7_lsan_leak " "$OUT/fuzz.out" && grep -qE "^c8_vendored_tamper " "$OUT/fuzz.out" && grep -qE "^c9_edge_not_exercised " "$OUT/fuzz.out" \
    && grep -qE "^c10_leak_class " "$OUT/fuzz.out" && grep -qE "^c11_hang " "$OUT/fuzz.out" && grep -qE "^c12_growth " "$OUT/fuzz.out" \
-   && grep -qE "^c13_classify_env " "$OUT/fuzz.out" && grep -qE "^c14_zero_limits " "$OUT/fuzz.out" && grep -qE "^c30_draft_not_countable " "$OUT/fuzz.out" ||
+   && grep -qE "^c13_classify_env " "$OUT/fuzz.out" && grep -qE "^c14_zero_limits " "$OUT/fuzz.out" && grep -qE "^c30_draft_not_countable " "$OUT/fuzz.out" && grep -qE "^c32_len_limits " "$OUT/fuzz.out" ||
   report fuzz_controls WRONG "runner produced no verdict lines (see $OUT/fuzz.out)"
 
 # Languages beyond C++ (docs/LANGUAGES.md): SKIP when a toolchain is absent.
@@ -186,6 +186,21 @@ if [ $r1 -ne 0 ] && [ "$(grep -c ' WRONG required language' "$D20/req.out")" = 1
   report c20_required_lang OK "required (rust, python, evm) + no toolchains: 14 WRONG (exit $r1); not required: 14 SKIP (exit 0)"
 else
   report c20_required_lang WRONG "required exit=$r1 [$(head -1 "$D20/req.out")]; optional exit=$r2 [$(head -1 "$D20/opt.out")]"
+fi
+
+# c31: one rule for site settings: an EXPORTED variable overrides config/hosts.env, which only supplies
+# defaults; a plain shell assignment that is not exported never reaches a child process.
+D31="$OUT/c31_hosts_env"; rm -rf "$D31"; mkdir -p "$D31/h/config" "$D31/h/scripts"
+cp "$ROOT/scripts/lib.sh" "$D31/h/scripts/"; cp "$ROOT/config/pins.env" "$D31/h/config/"
+printf 'FV_CPUSET=0-1\nFV_JOBS=3\n' > "$D31/h/config/hosts.env"
+q() { bash -c ". '$D31/h/scripts/lib.sh'; echo \"\$FV_CPUSET \$FV_JOBS\""; }
+e1=$(env -u FV_CPUSET -u FV_JOBS bash -c "$(declare -f q); D31='$D31'; q")
+e2=$(env -u FV_JOBS FV_CPUSET=0 bash -c "$(declare -f q); D31='$D31'; q")
+e3=$(env -u FV_CPUSET -u FV_JOBS bash -c "FV_CPUSET=0; $(declare -f q); D31='$D31'; q")
+if [ "$e1" = "0-1 3" ] && [ "$e2" = "0 3" ] && [ "$e3" = "0-1 3" ]; then
+  report c31_hosts_env OK "file only: [$e1]; exported FV_CPUSET=0: [$e2] (environment wins); unexported assignment: [$e3] (not seen)"
+else
+  report c31_hosts_env WRONG "file only: [$e1] (want 0-1 3); exported: [$e2] (want 0 3); unexported: [$e3] (want 0-1 3)"
 fi
 
 note "$fails control(s) misbehaved, $skipped skipped (toolchain absent); summary $SUM"

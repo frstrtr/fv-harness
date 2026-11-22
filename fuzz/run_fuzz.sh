@@ -53,6 +53,12 @@
 #   timeout = seconds per input [10]       -> FAIL "HANG: input exceeded N s" (infinite or runaway loops)
 #   rss_limit_mb [2048], malloc_limit_mb [= rss_limit_mb] -> FAIL "OOM: ..." (unbounded growth, huge mallocs)
 #   report_slow_units = seconds [2]        -> slow inputs are listed in fuzz.json (slow_units), not a failure
+# Input length, campaign only (libFuzzer's own defaults when absent):
+#   max_len = bytes (a positive whole number)  -> -max_len; the longest input the campaign generates
+#   len_control = N (0 or a positive number)   -> -len_control; 0 starts at max_len at once instead of
+#                                                 growing from short inputs (structured, multi-case targets)
+# They are not applied to the replay, the merge or the classification: -max_len would truncate longer
+# corpus inputs there. Both are recorded in fuzz.json .limits (null when absent).
 # Leaks (LeakSanitizer, per input and at exit) FAIL as "LEAK: ...". A leak is memory no longer
 # reachable; memory that stays reachable while it grows is not a leak, and only the RSS limit stops it.
 #
@@ -97,7 +103,11 @@ BAD_LIMIT=""  # 0 means "no limit" to libFuzzer, so it would silently switch HAN
 for kv in "timeout=$T_OUT" "rss_limit_mb=$RSS_MB" "malloc_limit_mb=$MAL_MB" "report_slow_units=$SLOW_S"; do
   [[ "${kv#*=}" =~ ^[1-9][0-9]*$ ]] || BAD_LIMIT+="${kv} "
 done
-[ -z "$BAD_LIMIT" ] || { T_OUT=0; RSS_MB=0; MAL_MB=0; SLOW_S=0; }
+MAX_LEN=$(cfg max_len ""); LEN_CTL=$(cfg len_control "")
+[ -z "$MAX_LEN" ] || [[ "$MAX_LEN" =~ ^[1-9][0-9]*$ ]] || BAD_LIMIT+="max_len=$MAX_LEN "
+[ -z "$LEN_CTL" ] || [[ "$LEN_CTL" =~ ^(0|[1-9][0-9]*)$ ]] || BAD_LIMIT+="len_control=$LEN_CTL "
+[ -z "$BAD_LIMIT" ] || { T_OUT=0; RSS_MB=0; MAL_MB=0; SLOW_S=0; MAX_LEN=""; LEN_CTL=""; }
+LENS=(); [ -n "$MAX_LEN" ] && LENS+=(-max_len="$MAX_LEN"); [ -n "$LEN_CTL" ] && LENS+=(-len_control="$LEN_CTL")
 LIMITS=(-timeout="$T_OUT" -rss_limit_mb="$RSS_MB" -malloc_limit_mb="$MAL_MB" -report_slow_units="$SLOW_S")
 RUN="${out:-$FV_ROOT/runs/fuzz-$target-$(date +%Y%m%dT%H%M%S)-$$}"
 mkdir -p "$RUN"; RUN="$(cd "$RUN" && pwd)"
@@ -116,7 +126,7 @@ verdict() { # verdict EXIT VERDICT DETAIL
     --arg art "$(ls "$RUN"/artifacts/ 2>/dev/null | head -1)" \
     --arg stats "$(grep -E '^(stat::number_of_executed_units|stat::average_exec_per_sec|stat::new_units_added)' "$RUN/campaign.log" 2>/dev/null | tr '\n' ' ')" \
     --argjson vend "${VENDORED_JSON:-{\}}" --argjson cls "${CLASSES_JSON:-null}" --argjson evm "${EVM_JSON:-null}" \
-    --argjson lim "{\"timeout_s\":$T_OUT,\"rss_limit_mb\":$RSS_MB,\"malloc_limit_mb\":$MAL_MB,\"report_slow_units_s\":$SLOW_S}" \
+    --argjson lim "{\"timeout_s\":$T_OUT,\"rss_limit_mb\":$RSS_MB,\"malloc_limit_mb\":$MAL_MB,\"report_slow_units_s\":$SLOW_S,\"max_len\":${MAX_LEN:-null},\"len_control\":${LEN_CTL:-null}}" \
     --arg slow "$(ls "$RUN"/artifacts/ 2>/dev/null | grep '^slow-unit-' | tr '\n' ' ')" \
     '(if $draft != "" then {draft:$draft} else {} end) + {verdict:$v, exit:$e, detail:$d, target:$t, runs:$runs, max_total_time:$secs, impl_dir:$impl,
       corpus:$corpus, lock_digest:$lock, campaign_seconds:$el, mismatch:$mm, artifact:$art, stats:$stats,
@@ -126,7 +136,7 @@ verdict() { # verdict EXIT VERDICT DETAIL
   exit "$1"
 }
 
-[ -z "$BAD_LIMIT" ] || verdict 3 ERROR "fv.toml: limits must be positive whole numbers (0 disables a limit): ${BAD_LIMIT% }"
+[ -z "$BAD_LIMIT" ] || verdict 3 ERROR "fv.toml: limits must be positive whole numbers (0 disables a limit; len_control may be 0): ${BAD_LIMIT% }"
 
 # 1. Lock and trusted oracle copy.
 if [ "$draft" -eq 1 ]; then
@@ -321,7 +331,7 @@ rm -f "$RUN"/artifacts/*
 # 4. Campaign.
 limit=(); [ -n "$secs" ] && limit+=(-max_total_time="$secs"); [ -n "$runs" ] && limit+=(-runs="$runs")
 t0=$(date +%s.%N)
-capped "$BIN" "${limit[@]}" "${LIMITS[@]}" -print_final_stats=1 -artifact_prefix="$RUN/artifacts/" \
+capped "$BIN" "${limit[@]}" "${LIMITS[@]}" "${LENS[@]}" -print_final_stats=1 -artifact_prefix="$RUN/artifacts/" \
   "$RUN/new_corpus" "$corpus" > "$RUN/campaign.log" 2>&1
 rc=$?
 elapsed=$(echo "$(date +%s.%N) - $t0" | bc)

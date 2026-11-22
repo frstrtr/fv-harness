@@ -229,6 +229,12 @@ Hosted runners have passwordless sudo, which the audit's network namespace needs
 check as a step: if the runner restricts user namespaces, add the AppArmor profile there as well.
 Why the fingerprint literal matters, and what it does not close: `docs/DESIGN-NOTES.md` §2.
 
+**What hosted CI covers.** The repository's workflow (`.github/workflows/controls.yml`) installs
+only the C++ toolchain. It runs the gate controls and the C++ fuzz controls (c1–c14, c20, c30).
+The language controls c15–c29 (Rust, Python, EVM) report **SKIP** there, because their toolchains
+are not installed. Their evidence is a run on a gate host that has all three toolchains
+(`tests/harness_fv_controls/evidence/`). They are not CI-verified.
+
 ---
 
 # The walk-through

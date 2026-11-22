@@ -210,6 +210,16 @@ reports:
 A short input that is far slower per step than the median points at an accidental quadratic or a
 loop over a growing structure.
 
+**Input length.** By default libFuzzer starts from very short inputs and lets them grow. A
+structured target, one that decodes many cases from one input, may therefore reach far fewer
+features until inputs get long. Two optional `[fuzz]` keys in `fv.toml` set the length:
+- `max_len`, a positive number of bytes;
+- `len_control`, where 0 means start at `max_len` at once.
+
+They apply to the campaign only. On the replay, the merge or the classification, `-max_len` would
+truncate longer corpus inputs. Both are recorded in `fuzz.json` `.limits`, with null when absent.
+Control c32 checks them.
+
 **Coupling a cost bound (optional, per project).** Termination of the C++ cannot be proved here.
 A cost bound can be coupled, though:
 - Let the model and the implementation both return an iteration or step counter as part of the
@@ -223,7 +233,8 @@ termination proof for the C++.
 
 **For contracts (EVM and EVM-like chains), gas or energy is the natural measure.** An infinite loop is
 out-of-gas. A "bad loop" is a loop over storage that users can grow: once it passes the block
-limit it is a denial-of-service and stuck-funds risk. The EVM pack (design pending) plans a
+limit it is a denial-of-service and stuck-funds risk. The EVM pack (`--lang evm`) reports
+each call's gas separately from its outcome and never compares it. Still planned: a
 gas-vs-input-size report, and optional statements such as "gas ≤ G for any state with ≤ N
 entries".
 
