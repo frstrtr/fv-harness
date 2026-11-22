@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # check_vendored.sh FUZZ_DIR — check harness files vendored into a project's fuzz directory.
 #
-# A project may vendor fuzz/LeanOracle.cmake and fuzz/diff_oracle_template.cpp (the fuzz directory
+# A project may vendor fuzz/LeanOracle.cmake, fuzz/diff_oracle_template.cpp, fuzz/fv_classify.hpp and the
+# Rust driver fuzz/rust/fv_diff.rs (as fv_diff.rs) (the fuzz directory
 # lies outside the spec lock, in the agent-writable tree). Each vendored copy must be a regular
 # file whose leading comment header names "Vendored from fv-harness <commit or release tag vX.Y.Z>",
 # and whose content
@@ -13,10 +14,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 dir="${1:?usage: $0 FUZZ_DIR}"
 out="{}"; rc=0
-for name in LeanOracle.cmake diff_oracle_template.cpp fv_classify.hpp; do
+for name in LeanOracle.cmake diff_oracle_template.cpp fv_classify.hpp fv_diff.rs; do
   f="$dir/$name"
   [ -e "$f" ] || [ -L "$f" ] || continue
-  first=$(head -1 "$HERE/$name")
+  src="$HERE/$name"; [ "$name" = fv_diff.rs ] && src="$HERE/rust/fv_diff.rs"  # the Rust driver
+  first=$(head -1 "$src")
   n=""; commit=""; body=""; pinned=""; hdr_ok=0
   if [ -f "$f" ] && [ ! -L "$f" ]; then
     n=$(grep -n -m1 -Fx -- "$first" "$f" | cut -d: -f1)

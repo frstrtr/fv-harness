@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # run_fuzz.sh — differential fuzz campaign (COUPLE stage, Module 5).
 #
-#   fuzz/run_fuzz.sh --lean-project DIR --lock LOCKFILE --cmake-dir DIR --target NAME
+#   fuzz/run_fuzz.sh --lean-project DIR --lock LOCKFILE --cmake-dir DIR --target NAME [--lang cpp|rust]
 #                    [--impl-dir DIR] [--runs N | --time SECONDS] [--corpus DIR]
 #                    [--no-merge] [--out RUNDIR]
 #
@@ -11,6 +11,14 @@
 #    must equal, below their "Vendored from fv-harness <commit>" header, the harness's copy at
 #    that commit (fuzz/VENDORED.sha256), else FAIL before anything is built.
 # 2. Configure and build the fuzzer (clang, libFuzzer + ASan + UBSan) against that copy.
+#    --lang rust: CMAKE_DIR's CMakeLists.txt builds only <target>_oracle, the oracle as a shared
+#    library (lean_oracle_shared); then `cargo fuzz build -a` (ASan, debug assertions and overflow
+#    checks ON) builds the cargo-fuzz target <target> in CMAKE_DIR with FV_ORACLE_LIB_DIR pointing at
+#    it, FV_IMPL_DIR at --impl-dir and FV_DIFF_RS at the harness's driver (fuzz/rust/fv_diff.rs),
+#    which the target must use (fv_diff_main!, no fuzz_target! of its own). RUSTFLAGS forces
+#    overflow checks and debug assertions on; a project setting either off (Cargo.toml, any
+#    .cargo/config cargo would read) is ERROR. Toolchain: $FV_RUST_HOME (default $FV_ROOT/rust). Rust runs
+#    are not classified yet (labels only).
 # 3. Regression replay: every file in the persisted corpus must pass.
 # 4. Campaign: -runs=N (default 1000000) or -max_total_time=SECONDS (CI: 60).
 # 5. On PASS, merge new coverage into the persisted corpus (unless --no-merge).
@@ -36,7 +44,7 @@ unset FV_CLASSIFY FV_CLASSIFY_RENDER FV_CLASSIFY_TIME_IMPL
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/../scripts/lib.sh"
 
-proj=""; lock=""; cmake_dir=""; target=""; impl=""; runs=""; secs=""; corpus=""; merge=1; out=""
+proj=""; lock=""; cmake_dir=""; target=""; impl=""; runs=""; secs=""; corpus=""; merge=1; out=""; lang=cpp
 while [ $# -gt 0 ]; do
   case "$1" in
     --lean-project) proj="$2"; shift 2 ;;
@@ -44,6 +52,7 @@ while [ $# -gt 0 ]; do
     --cmake-dir) cmake_dir="$2"; shift 2 ;;
     --target) target="$2"; shift 2 ;;
     --impl-dir) impl="$2"; shift 2 ;;
+    --lang) lang="$2"; shift 2 ;;
     --runs) runs="$2"; shift 2 ;;
     --time) secs="$2"; shift 2 ;;
     --corpus) corpus="$2"; shift 2 ;;
@@ -107,20 +116,60 @@ mkdir -p "$RUN/oracle_project"
 (cd "$proj" && cut -d' ' -f3- "$lock" | tr '\n' '\0' | xargs -0 cp --parents -t "$RUN/oracle_project")
 
 # 2. Build.
-cfg=(-S "$cmake_dir" -B "$RUN/build" -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cfg=(-S "$cmake_dir" -B "$RUN/build" -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang
+     -DCMAKE_BUILD_TYPE=RelWithDebInfo
      -DFV_HARNESS_DIR="$FV_HARNESS_DIR" -DLEAN_PROJECT="$RUN/oracle_project" -DLEAN_BIN_DIR="$LEAN_TC/bin")
-[ -n "$impl" ] && cfg+=(-DIMPL_DIR="$(cd "$impl" && pwd)")
-if ! { capped cmake "${cfg[@]}" && capped cmake --build "$RUN/build" --target "$target" -j "$FV_JOBS"; } >> "$LOG" 2>&1; then
-  verdict 3 ERROR "fuzzer build failed (see $LOG)"
-fi
-BIN="$RUN/build/$target"
-# The labels-only classify build is optional: without it (e.g. an older vendored LeanOracle.cmake)
-# the run is simply not classified. It never affects the verdict.
 BIN_CLS=""
-if capped cmake --build "$RUN/build" --target "${target}_classify" -j "$FV_JOBS" >> "$RUN/build-classify.log" 2>&1 \
-   && [ -x "$RUN/build/${target}_classify" ]; then
-  BIN_CLS="$RUN/build/${target}_classify"
-fi
+case "$lang" in
+  cpp)
+    [ -n "$impl" ] && cfg+=(-DIMPL_DIR="$(cd "$impl" && pwd)")
+    if ! { capped cmake "${cfg[@]}" && capped cmake --build "$RUN/build" --target "$target" -j "$FV_JOBS"; } >> "$LOG" 2>&1; then
+      verdict 3 ERROR "fuzzer build failed (see $LOG)"
+    fi
+    BIN="$RUN/build/$target"
+    # The labels-only classify build is optional: without it (e.g. an older vendored
+    # LeanOracle.cmake) the run is simply not classified. It never affects the verdict.
+    if capped cmake --build "$RUN/build" --target "${target}_classify" -j "$FV_JOBS" >> "$RUN/build-classify.log" 2>&1 \
+       && [ -x "$RUN/build/${target}_classify" ]; then
+      BIN_CLS="$RUN/build/${target}_classify"
+    fi
+    ;;
+  rust)
+    rh="${FV_RUST_HOME:-$FV_ROOT/rust}"
+    [ -x "$rh/cargo/bin/cargo-fuzz" ] || verdict 3 ERROR "cargo-fuzz not installed under $rh (docs/LANGUAGES.md)"
+    impl_dir="$(cd "${impl:-$cmake_dir/../impl}" && pwd)"
+    # The comparison loop is the harness's (fuzz/rust/fv_diff.rs): the target must use it.
+    tsrc="$cmake_dir/fuzz_targets/$target.rs"
+    [ -f "$tsrc" ] || verdict 3 ERROR "no fuzz target source $tsrc"
+    if grep -q 'fuzz_target!' "$tsrc" || ! grep -q 'fv_diff_main!' "$tsrc"; then
+      verdict 3 ERROR "the Rust fuzz target must end with fv_diff_main!(...) and define no fuzz_target! of its own (fuzz/rust/fv_diff.rs)"
+    fi
+    # Overflow checks and debug assertions cannot be switched off by the project.
+    off=$( { grep -HnE '^[[:space:]]*(overflow-checks|debug-assertions)[[:space:]]*=[[:space:]]*false' "$cmake_dir/Cargo.toml" 2>/dev/null
+             d="$cmake_dir"; while :; do
+               for c in "$d/.cargo/config" "$d/.cargo/config.toml"; do
+                 [ -f "$c" ] && grep -HnE '(overflow-checks|debug-assertions)[[:space:]]*=[[:space:]]*false|overflow-checks=off|debug-assertions=off' "$c"
+               done
+               [ "$d" = / ] && break; d=$(dirname "$d")
+             done
+             for c in "$rh/cargo/config" "$rh/cargo/config.toml"; do
+               [ -f "$c" ] && grep -HnE '(overflow-checks|debug-assertions)[[:space:]]*=[[:space:]]*false|overflow-checks=off|debug-assertions=off' "$c"
+             done; } | head -3)
+    [ -z "$off" ] || verdict 3 ERROR "overflow checks or debug assertions switched off for the Rust build: $(echo "$off" | tr '\n' ' ')"
+    while IFS= read -r v; do unset "$v"; done < <(env | sed -n 's/^\(CARGO_PROFILE_[A-Z0-9_]*\)=.*/\1/p')
+    if ! { capped cmake "${cfg[@]}" && capped cmake --build "$RUN/build" --target "${target}_oracle" -j "$FV_JOBS" \
+           && (cd "$cmake_dir" && RUSTUP_HOME="$rh/rustup" CARGO_HOME="$rh/cargo" PATH="$rh/cargo/bin:$PATH" \
+               FV_ORACLE_LIB_DIR="$RUN/build" FV_ORACLE_LIB="${target}_oracle" FV_IMPL_DIR="$impl_dir" \
+               FV_DIFF_RS="$HERE/rust/fv_diff.rs" RUSTFLAGS="-C overflow-checks=on -C debug-assertions=on" \
+               capped cargo fuzz build -a --fuzz-dir "$cmake_dir" --target-dir "$RUN/cargo-target" "$target"); } >> "$LOG" 2>&1; then
+      verdict 3 ERROR "fuzzer build failed (see $LOG)"
+    fi
+    BIN="$RUN/cargo-target/x86_64-unknown-linux-gnu/release/$target"
+    [ -x "$BIN" ] || verdict 3 ERROR "cargo fuzz produced no binary at $BIN"
+    impl="$impl_dir"
+    ;;
+  *) verdict 3 ERROR "unknown --lang $lang (cpp|rust)" ;;
+esac
 classify_line_in() { # a verdict log must never come from the classify build
   local f; for f in "$@"; do [ -f "$f" ] && grep -q 'diff-oracle: CLASSIFY BUILD' "$f" && return 0; done; return 1
 }
@@ -157,6 +206,8 @@ fail_kind() { # fail_kind LOG -> a verdict detail naming what went wrong, or not
     echo "OOM: $(grep -m1 -oE 'out-of-memory \([^)]*\)' "$l")"
   elif grep -q 'ERROR: LeakSanitizer' "$l"; then
     echo "LEAK: $(grep -m1 -oE '(Direct|Indirect) leak of [0-9]+ byte\(s\) in [0-9]+ object\(s\)' "$l")"
+  elif grep -q "panicked at" "$l"; then  # Rust: overflow checks, explicit panics, unwraps
+    echo "panic: $(grep -m1 -A1 'panicked at' "$l" | tr '\n' ' ' | sed -E "s/^thread '[^']*' //" | cut -c1-160)"
   elif grep -qE 'ERROR: (AddressSanitizer|UndefinedBehaviorSanitizer)|runtime error:' "$l"; then
     echo "sanitizer: $(grep -m1 -oE '(AddressSanitizer|UndefinedBehaviorSanitizer): [A-Za-z-]+|runtime error: .{0,80}' "$l")"
   elif grep -q 'ERROR: libFuzzer' "$l"; then echo "fuzzer: $(grep -m1 -oE 'ERROR: libFuzzer: [a-z-]+' "$l")"

@@ -1,0 +1,22 @@
+# Differential fuzzer: the Rust risk check (../impl, or FV_IMPL_DIR) against the Lean oracle from
+# the signed spec (../../risk-limit/lean), linked as a shared library built by fuzz/run_fuzz.sh.
+[package]
+name = "risk-limit-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+
+[[bin]]
+name = "diff_risk"
+path = "fuzz_targets/diff_risk.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

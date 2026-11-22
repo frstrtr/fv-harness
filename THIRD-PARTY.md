@@ -24,6 +24,15 @@ the model card's licence field and the licence file at the pinned revision.
 | uv | 0.13.9 | Apache-2.0 or MIT | github.com/astral-sh/uv |
 | llama.cpp (`llama-server`) | b12387 = a956a852c9c8bc1fb07206364838ddef299178c0: source build on the gate host; official `ubuntu-cuda-12.8-x64` release binaries on remote GPU hosts | MIT | github.com/ggml-org/llama.cpp |
 
+## Rust (optional; only for Rust implementations under test)
+
+| Component | Pinned version | Licence | Source |
+|---|---|---|---|
+| rustup | 1.29.3 (rustup-init sha256 `b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55`) | Apache-2.0 or MIT | static.rust-lang.org, github.com/rust-lang/rustup |
+| Rust toolchain | nightly-2026-11-10 (rustc 1.102.0-nightly ac8310ba6) | Apache-2.0 or MIT | static.rust-lang.org |
+| cargo-fuzz | 0.13.2 | Apache-2.0 or MIT | github.com/rust-fuzz/cargo-fuzz |
+| libfuzzer-sys | 0.4.13 (crate checksum `a9fd2f41…29d2`, pinned in Cargo.lock) | (MIT OR Apache-2.0) AND NCSA | crates.io/crates/libfuzzer-sys |
+
 ## Sandbox, compiler and fuzzer (distribution packages)
 
 | Component | Version used | Licence | Source |

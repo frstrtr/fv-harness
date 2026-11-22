@@ -23,6 +23,8 @@ The pipeline:
 - `docs/CASE-STUDIES.md`: what it found on first use.
 - `examples/risk-limit/`: a pre-trade risk check, with a correct and an overflow-buggy C++ variant.
 - `docs/HARDWARE.md`: machine profiles (minimum and recommended) and the prover models by GPU class. No GPU is needed for the gate.
+- `docs/LANGUAGES.md`: languages beyond C++. Rust is shipped (`examples/risk-limit-rust`); Python,
+  EVM, Go, Java/Kotlin and JS are planned. It also covers how each binds to the oracle.
 
 Licence: Apache-2.0 (`LICENSE`, `NOTICE`). Third-party tools and models are referenced, not
 vendored (`THIRD-PARTY.md`). Commit ids cited in reports refer to the development history from
@@ -42,6 +44,7 @@ before this repository's single root commit.
 | `locks/` | Lock manifests. They live here, outside every agent-writable tree |
 | `fixtures/conservation/` | Minimal arithmetic conservation fixture: ledger transfer with a rounded-down fee |
 | `fixtures/conservation_cpp/` | Its production C++ (`impl/`) and differential fuzzer (`fuzz/`: binding, CMake, corpus) |
+| `examples/risk-limit-rust/` | The same signed spec coupled to a Rust implementation (cargo-fuzz), with drift and overflow controls |
 | `examples/risk-limit/` | A second, end-to-end example: a pre-trade risk check (signed lock `locks/risk-limit.*`), correct and buggy C++, `run.sh` |
 | `fuzz/diff_oracle_template.cpp` | Reusable differential fuzzer (Module 5) |
 | `fuzz/LeanOracle.cmake` | `lean_oracle_library()` and `add_diff_fuzzer()` CMake functions |
