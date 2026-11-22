@@ -14,10 +14,12 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 dir="${1:?usage: $0 FUZZ_DIR}"
 out="{}"; rc=0
-for name in LeanOracle.cmake diff_oracle_template.cpp fv_classify.hpp fv_diff.rs; do
+for name in LeanOracle.cmake diff_oracle_template.cpp fv_classify.hpp fv_diff.rs fv_diff.py; do
   f="$dir/$name"
   [ -e "$f" ] || [ -L "$f" ] || continue
-  src="$HERE/$name"; [ "$name" = fv_diff.rs ] && src="$HERE/rust/fv_diff.rs"  # the Rust driver
+  src="$HERE/$name"
+  [ "$name" = fv_diff.rs ] && src="$HERE/rust/fv_diff.rs"    # the Rust driver
+  [ "$name" = fv_diff.py ] && src="$HERE/python/fv_diff.py"  # the Python driver
   first=$(head -1 "$src")
   n=""; commit=""; body=""; pinned=""; hdr_ok=0
   if [ -f "$f" ] && [ ! -L "$f" ]; then

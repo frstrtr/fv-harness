@@ -33,6 +33,12 @@ the model card's licence field and the licence file at the pinned revision.
 | cargo-fuzz | 0.13.2 | Apache-2.0 or MIT | github.com/rust-fuzz/cargo-fuzz |
 | libfuzzer-sys | 0.4.13 (crate checksum `a9fd2f41…29d2`, pinned in Cargo.lock) | (MIT OR Apache-2.0) AND NCSA | crates.io/crates/libfuzzer-sys |
 
+## Python (optional; only for Python implementations under test)
+
+| Component | Pinned version | Licence | Source |
+|---|---|---|---|
+| Atheris | 3.1.0 (cp314 manylinux x86_64 wheel sha256 `315a0b5c819852b1ffe1ca72efc389c7724881f2c33e4aacb8c6bcec49bd5011`) | Apache-2.0 | pypi.org/project/atheris, github.com/google/atheris |
+
 ## Sandbox, compiler and fuzzer (distribution packages)
 
 | Component | Version used | Licence | Source |

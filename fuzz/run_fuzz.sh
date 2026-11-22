@@ -19,6 +19,9 @@
 #    overflow checks and debug assertions on; a project setting either off (Cargo.toml, any
 #    .cargo/config cargo would read) is ERROR. Toolchain: $FV_RUST_HOME (default $FV_ROOT/rust). Rust runs
 #    are not classified yet (labels only).
+#    --lang python: the same oracle library; the harness's driver fuzz/python/fv_diff.py (Atheris,
+#    $FV_PY, default $FV_ROOT/py/venv/bin/python) loads CMAKE_DIR/binding.py and the implementation
+#    from --impl-dir; implementation values outside [0, 2^64) FAIL as "domain: ...".
 # 3. Regression replay: every file in the persisted corpus must pass.
 # 4. Campaign: -runs=N (default 1000000) or -max_total_time=SECONDS (CI: 60).
 # 5. On PASS, merge new coverage into the persisted corpus (unless --no-merge).
@@ -168,7 +171,27 @@ case "$lang" in
     [ -x "$BIN" ] || verdict 3 ERROR "cargo fuzz produced no binary at $BIN"
     impl="$impl_dir"
     ;;
-  *) verdict 3 ERROR "unknown --lang $lang (cpp|rust)" ;;
+  python)
+    py="${FV_PY:-$FV_ROOT/py/venv/bin/python}"
+    { [ -x "$py" ] && "$py" -I -c 'import atheris' 2>/dev/null; } || verdict 3 ERROR "atheris not available to $py (docs/LANGUAGES.md)"
+    impl_dir="$(cd "${impl:-$cmake_dir/../impl}" && pwd)"
+    bnd="$cmake_dir/binding.py"
+    [ -f "$bnd" ] || verdict 3 ERROR "no Python binding $bnd"
+    # The loop is the harness's (fuzz/python/fv_diff.py): the binding must not drive the fuzzer.
+    if grep -qE '^[^#]*(def[[:space:]]+TestOneInput|atheris\.(Setup|Fuzz))' "$bnd"; then
+      verdict 3 ERROR "the Python binding must not define TestOneInput or call atheris.Setup/Fuzz (fuzz/python/fv_diff.py drives the fuzzer)"
+    fi
+    if ! { capped cmake "${cfg[@]}" && capped cmake --build "$RUN/build" --target "${target}_oracle" -j "$FV_JOBS"; } >> "$LOG" 2>&1; then
+      verdict 3 ERROR "oracle build failed (see $LOG)"
+    fi
+    so="$RUN/build/lib${target}_oracle.so"; [ -f "$so" ] || verdict 3 ERROR "no oracle library $so"
+    BIN="$RUN/fuzz-$target"
+    printf '#!/bin/sh\nexec env FV_BINDING=%q FV_IMPL_DIR=%q FV_ORACLE_SO=%q %q -I %q "$@"\n' \
+      "$bnd" "$impl_dir" "$so" "$py" "$HERE/python/fv_diff.py" > "$BIN"
+    chmod +x "$BIN"
+    impl="$impl_dir"
+    ;;
+  *) verdict 3 ERROR "unknown --lang $lang (cpp|rust|python)" ;;
 esac
 classify_line_in() { # a verdict log must never come from the classify build
   local f; for f in "$@"; do [ -f "$f" ] && grep -q 'diff-oracle: CLASSIFY BUILD' "$f" && return 0; done; return 1
@@ -200,12 +223,16 @@ classify() { # classify corpus|findings — labels only; sets CLASSES_JSON, neve
 
 fail_kind() { # fail_kind LOG -> a verdict detail naming what went wrong, or nothing
   local l="$1"
-  if grep -q 'diff-oracle: MISMATCH' "$l"; then echo "oracle/implementation mismatch"
+  if grep -q 'diff-oracle: DOMAIN' "$l"; then  # Python: a value outside the declared integer width
+    echo "domain: $(grep -m1 -oE 'diff-oracle: DOMAIN at step [0-9]+ \(.*\)' "$l" | sed 's/^diff-oracle: DOMAIN //' | cut -c1-140)"
+  elif grep -q 'diff-oracle: MISMATCH' "$l"; then echo "oracle/implementation mismatch"
   elif grep -q 'ERROR: libFuzzer: timeout' "$l"; then echo "HANG: input exceeded ${T_OUT} s"
   elif grep -q 'ERROR: libFuzzer: out-of-memory' "$l"; then
     echo "OOM: $(grep -m1 -oE 'out-of-memory \([^)]*\)' "$l")"
   elif grep -q 'ERROR: LeakSanitizer' "$l"; then
     echo "LEAK: $(grep -m1 -oE '(Direct|Indirect) leak of [0-9]+ byte\(s\) in [0-9]+ object\(s\)' "$l")"
+  elif grep -q 'Uncaught Python exception' "$l"; then
+    echo "python exception: $(grep -A40 'Uncaught Python exception' "$l" | grep -m1 -E '^[A-Za-z_.]*(Error|Exception)' | cut -c1-140)"
   elif grep -q "panicked at" "$l"; then  # Rust: overflow checks, explicit panics, unwraps
     echo "panic: $(grep -m1 -A1 'panicked at' "$l" | tr '\n' ' ' | sed -E "s/^thread '[^']*' //" | cut -c1-160)"
   elif grep -qE 'ERROR: (AddressSanitizer|UndefinedBehaviorSanitizer)|runtime error:' "$l"; then

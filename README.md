@@ -25,6 +25,8 @@ The pipeline:
 - `docs/HARDWARE.md`: machine profiles (minimum and recommended) and the prover models by GPU class. No GPU is needed for the gate.
 - `docs/LANGUAGES.md`: languages beyond C++. Rust is shipped (`examples/risk-limit-rust`); Python,
   EVM, Go, Java/Kotlin and JS are planned. It also covers how each binds to the oracle.
+- `docs/LANGUAGES.md`: languages beyond C++. Rust and Python are shipped (`examples/risk-limit-rust`,
+  `examples/risk-limit-py`); EVM, Go, Java/Kotlin and JS are planned. It also covers how each binds to the oracle.
 
 Licence: Apache-2.0 (`LICENSE`, `NOTICE`). Third-party tools and models are referenced, not
 vendored (`THIRD-PARTY.md`). Commit ids cited in reports refer to the development history from
@@ -44,6 +46,7 @@ before this repository's single root commit.
 | `locks/` | Lock manifests. They live here, outside every agent-writable tree |
 | `fixtures/conservation/` | Minimal arithmetic conservation fixture: ledger transfer with a rounded-down fee |
 | `fixtures/conservation_cpp/` | Its production C++ (`impl/`) and differential fuzzer (`fuzz/`: binding, CMake, corpus) |
+| `examples/risk-limit-py/` | The same signed spec coupled to a Python implementation (Atheris), with drift and 2^64-domain controls |
 | `examples/risk-limit-rust/` | The same signed spec coupled to a Rust implementation (cargo-fuzz), with drift and overflow controls |
 | `examples/risk-limit/` | A second, end-to-end example: a pre-trade risk check (signed lock `locks/risk-limit.*`), correct and buggy C++, `run.sh` |
 | `fuzz/diff_oracle_template.cpp` | Reusable differential fuzzer (Module 5) |

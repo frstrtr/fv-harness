@@ -227,3 +227,21 @@ limit it is a denial-of-service and stuck-funds risk. The EVM pack (design pendi
 gas-vs-input-size report, and optional statements such as "gas ≤ G for any state with ≤ N
 entries".
 
+## 7. Threat model of the coupling: the binding is trusted
+
+In every language the **binding is trusted and must be human-reviewed**. It implements
+`oracle_step` and `impl_step`, so it can always defeat the comparison: by calling the wrong
+function, by comparing the wrong fields, or, in Python, by monkeypatching the driver at run time.
+
+The harness-owned driver (`diff_oracle_template.cpp`, `fuzz/rust/fv_diff.rs`,
+`fuzz/python/fv_diff.py`), the vendored-file pins and the run-time guards protect the **loop and
+the verdict mechanics** against:
+- accidental weakening;
+- the environment (`FV_CLASSIFY*`, `CARGO_PROFILE_*`);
+- project configuration (`fv.toml` limits, Cargo profiles);
+- a project shipping its own loop.
+
+They do **not** protect against a hostile binding. Therefore every project's REVIEW-NOTE must show
+its binding: the binding header or module, its `initial_state` (which inputs count as
+admissible), and the exact fields compared.
+

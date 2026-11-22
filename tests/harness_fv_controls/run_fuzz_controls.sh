@@ -78,11 +78,15 @@ fi
 # The fuzz directory lives outside $OUT/c8_vendored_tamper, which campaign() recreates.
 V="$OUT/c8_fuzzdir"; rm -rf "$V"; mkdir -p "$V"
 cp -r "$CPP"/. "$V"/
-rel=$(awk '!/^#/ && $1 ~ /^v/ { t = $1 } END { print t }' "$ROOT/fuzz/VENDORED.sha256")  # newest release
+# Each copy cites a pinned id whose body equals the harness's current file (fuzz/VENDORED.sha256).
+pin_missing=""
 for f in LeanOracle.cmake diff_oracle_template.cpp fv_classify.hpp; do
   case "$f" in *.cmake) c="#" ;; *) c="//" ;; esac
-  { echo "$c Vendored from fv-harness $rel ($f), unchanged below this header."; echo "$c"; cat "$ROOT/fuzz/$f"; } > "$V/$f"
+  rel=$(awk -v n="$f" -v h="$(sha256sum < "$ROOT/fuzz/$f" | cut -d' ' -f1)" '!/^#/ && $2 == n && $3 == h { print $1; exit }' "$ROOT/fuzz/VENDORED.sha256")
+  [ -n "$rel" ] || pin_missing+="$f "
+  { echo "$c Vendored from fv-harness ${rel:-UNPINNED} ($f), unchanged below this header."; echo "$c"; cat "$ROOT/fuzz/$f"; } > "$V/$f"
 done
+[ -z "$pin_missing" ] || echo "c8 setup: no VENDORED.sha256 pin for the current body of: $pin_missing" >&2
 "$ROOT/fuzz/check_vendored.sh" "$V" > "$OUT/c8_untampered.json" 2>/dev/null; rc0=$?
 sed -i 's/  if (rc != 0) {/  if (false \&\& rc != 0) {/' "$V/diff_oracle_template.cpp"
 grep -q 'if (false && rc != 0)' "$V/diff_oracle_template.cpp" || echo "c8 setup: tamper line not found" >&2

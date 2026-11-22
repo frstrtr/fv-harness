@@ -7,7 +7,7 @@ therefore be the side under test. The gate (AUDIT) is the same for every languag
 is only the COUPLE step: how the oracle is linked, which fuzzer drives inputs, and which sanitizers
 watch the implementation.
 
-`fuzz/run_fuzz.sh --lang cpp|rust` selects the build. The replay, campaign, merge, reproducers,
+`fuzz/run_fuzz.sh --lang cpp|rust|python` selects the build. The replay, campaign, merge, reproducers,
 verdict codes and the edge-case classification replay stay the same wherever the fuzzer speaks
 libFuzzer's command line.
 
@@ -20,7 +20,7 @@ Checked at source on 2026-11-22.
 | C++ | libFuzzer (LLVM, Apache-2.0 with LLVM exception) | static library, `diff_oracle_template.cpp` | ASan, UBSan, LeakSanitizer | **shipped** (fixture, `examples/risk-limit`) | — |
 | C | libFuzzer | the same template (C headers included from C++) | ASan, UBSan, LeakSanitizer | trivial: use the C++ template | — |
 | Rust | cargo-fuzz 0.13.2 + libfuzzer-sys 0.4.13 ((MIT OR Apache-2.0) AND NCSA); a pinned **nightly** toolchain | `oracle_shared` linked by `build.rs` | ASan (via cargo-fuzz), LeakSanitizer | **shipped** (`examples/risk-limit-rust`) | UBSan has no Rust equivalent. The fuzz build runs with **overflow checks on**, so an arithmetic overflow panics and FAILs. Release builds wrap silently unless the code uses `checked_*`, `wrapping_*` or `saturating_*`, so write the intended behaviour explicitly. |
-| Python | Atheris 3.1.0 (Apache-2.0); wheels for CPython 3.12–3.14 | `ctypes` on `oracle_shared` | none for pure Python (memory-safe); C extensions can be built with ASan | **Pack 3** (`examples/risk-limit-py`) | Python integers are unbounded, so the binding must reduce to the model's widths (e.g. mod 2^64). That is a **modelling assumption**, listed in the review note, and its drift control includes a difference only above 2^64. |
+| Python | Atheris 3.1.0 (Apache-2.0); wheels for CPython 3.12–3.14 | `ctypes` on `oracle_shared` | none for pure Python (memory-safe); C extensions can be built with ASan | **shipped** (`examples/risk-limit-py`) | Python integers are unbounded, so the binding must reduce to the model's widths (e.g. mod 2^64). That is a **modelling assumption**, listed in the review note, and its drift control includes a difference only above 2^64. |
 | Go | native fuzzing (`go test -fuzz`, Go 1.27, BSD-3-Clause) | cgo to the static library | `-asan` with clang | planned | A different engine and command line: it needs its own runner, and its corpus format differs. |
 | Java / Kotlin | Jazzer (Apache-2.0) | JNA or the Panama FFI on `oracle_shared` | none for JVM code; native parts can use ASan | planned | needs a JVM; GC timing makes per-input timeouts noisier |
 | TypeScript / JavaScript | Jazzer.js (Apache-2.0) | N-API or an FFI module on `oracle_shared` | none for JS | planned | Number vs BigInt: 64-bit values must be BigInt end to end |
@@ -92,6 +92,68 @@ what you want. If wrapping is intended, write `wrapping_*` explicitly so that bo
 
 **Not yet:** Rust runs are not classified (the edge-case classifier needs a Rust `describe()`).
 The verdict is unaffected.
+
+## Python: setup, pins and measured results
+
+Atheris runs libFuzzer underneath, so the replay, campaign, merge, reproducers and verdicts are the
+same as for C++. User-local, in a uv virtual environment:
+
+```sh
+P=$FV_ROOT/py; mkdir -p "$P/dl"; cd "$P/dl"
+W=atheris-3.1.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+curl -sSfL -o "$W" "$(curl -s https://pypi.org/pypi/atheris/3.1.0/json | python3 -I -c \
+  "import json,sys; print([u['url'] for u in json.load(sys.stdin)['urls'] if u['filename'] == '$W'][0])")"
+echo "315a0b5c819852b1ffe1ca72efc389c7724881f2c33e4aacb8c6bcec49bd5011  $W" | sha256sum -c
+uv venv --python /usr/bin/python3 "$P/venv"
+uv pip install --python "$P/venv/bin/python" --no-index "./$W"
+```
+
+This is the cp314 wheel. For Python 3.12 or 3.13, pick the matching wheel from the same PyPI JSON
+and check its sha256.
+
+The split is the same as for C++ and Rust:
+- **`fuzz/python/fv_diff.py` (harness)** loads the oracle `.so` through ctypes and does the
+  decoding and the step loop. It compares after every step, checks the **integer domain**, and
+  writes the mismatch report with exit 86.
+- **`fuzz/binding.py` (project)** declares the oracle functions and the implementation module, and
+  implements `initial_state`, `make_op`, `oracle_step`, `impl_step`, `u64_values`, `same` and
+  `show_*`. It must not define `TestOneInput` or call `atheris.Setup/Fuzz`; `run_fuzz.sh` refuses
+  a binding that does.
+- A vendored copy of the driver is pinned like the other harness files.
+
+**Integer domain: a modelling assumption, made explicit.** Python integers are unbounded, while
+the oracle's C boundary is unsigned 64-bit. The driver therefore does **not** reduce the
+implementation's results mod 2^64. Every value the binding lists in `u64_values` must lie in
+[0, 2^64), or the input FAILs as `domain: …`. A result that differs from the oracle only above
+2^64, which a reduction would hide, is caught. Control c23 is such a result: a fill that adds
+2^64. State the assumption in the project's review note.
+
+Measured on the risk-limit example:
+- the correct implementation PASSes at about 13,000 runs/s;
+- a reduction one unit short FAILs as a mismatch in about 0.2 s;
+- the 2^64 units bug FAILs as `domain: … pos = 18446744073709551616 is outside [0, 2^64)` in
+  about 0.1 s.
+
+Controls c21–c24 cover these and the driver. A copy with the domain check replaced by a
+reduction mod 2^64 lets c23 PASS, which is exactly the masking the check exists to prevent.
+
+## Threat model of the coupling: the binding is trusted
+
+In every language the **binding is trusted and must be human-reviewed**. It implements
+`oracle_step` and `impl_step`, so it can always defeat the comparison: by calling the wrong
+function, by comparing the wrong fields, or, in Python, by monkeypatching the driver at run time.
+
+The harness-owned driver (`diff_oracle_template.cpp`, `fuzz/rust/fv_diff.rs`,
+`fuzz/python/fv_diff.py`), the vendored-file pins and the run-time guards protect the **loop and
+the verdict mechanics** against:
+- accidental weakening;
+- the environment (`FV_CLASSIFY*`, `CARGO_PROFILE_*`);
+- project configuration (`fv.toml` limits, Cargo profiles);
+- a project shipping its own loop.
+
+They do **not** protect against a hostile binding. Therefore every project's REVIEW-NOTE must show
+its binding: the binding header or module, its `initial_state` (which inputs count as
+admissible), and the exact fields compared.
 
 ## Recommended order
 

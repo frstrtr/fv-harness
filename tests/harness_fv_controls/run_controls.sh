@@ -170,15 +170,19 @@ grep -qE "^c1_fuzz " "$OUT/fuzz.out" && grep -qE "^c6_cpp_drift " "$OUT/fuzz.out
 while read -r id res detail; do
   [ -n "$id" ] && report "$id" "$res" "$detail"
 done < "$OUT/lang.out"
-grep -qE "^c15_rust_clean " "$OUT/lang.out" && grep -qE "^c16_rust_drift " "$OUT/lang.out" && grep -qE "^c17_rust_overflow " "$OUT/lang.out" ||
+for c in c15_rust_clean c16_rust_drift c17_rust_overflow c18_rust_vendored_tamper c19_rust_profile_off \
+         c21_py_clean c22_py_drift c23_py_wide c24_py_vendored_tamper; do
+  grep -qE "^$c " "$OUT/lang.out" || report "$c" WRONG "no verdict line from the language runner (see $OUT/lang.out)"
+done
+grep -qE "^c15_rust_clean " "$OUT/lang.out" ||
   report lang_controls WRONG "runner produced no verdict lines (see $OUT/lang.out)"
 
 # Control 20: a language the gate host requires (FV_REQUIRE_LANGS) may not be skipped.
 D20="$OUT/c20_required_lang"; mkdir -p "$D20"
-FV_REQUIRE_LANGS=rust FV_RUST_HOME="$D20/no-toolchain" "$ROOT/tests/harness_fv_controls/run_lang_controls.sh" "$D20/req" > "$D20/req.out" 2>&1; r1=$?
-FV_REQUIRE_LANGS= FV_RUST_HOME="$D20/no-toolchain" "$ROOT/tests/harness_fv_controls/run_lang_controls.sh" "$D20/opt" > "$D20/opt.out" 2>&1; r2=$?
-if [ $r1 -ne 0 ] && [ "$(grep -c ' WRONG required language rust' "$D20/req.out")" = 3 ] && [ $r2 -eq 0 ] && [ "$(grep -c ' SKIP ' "$D20/opt.out")" = 3 ]; then
-  report c20_required_lang OK "required + no toolchain: 3 WRONG (exit $r1); not required: 3 SKIP (exit 0)"
+FV_REQUIRE_LANGS="rust python" FV_RUST_HOME="$D20/no-toolchain" FV_PY="$D20/no-python" "$ROOT/tests/harness_fv_controls/run_lang_controls.sh" "$D20/req" > "$D20/req.out" 2>&1; r1=$?
+FV_REQUIRE_LANGS= FV_RUST_HOME="$D20/no-toolchain" FV_PY="$D20/no-python" "$ROOT/tests/harness_fv_controls/run_lang_controls.sh" "$D20/opt" > "$D20/opt.out" 2>&1; r2=$?
+if [ $r1 -ne 0 ] && [ "$(grep -c ' WRONG required language' "$D20/req.out")" = 9 ] && [ $r2 -eq 0 ] && [ "$(grep -c ' SKIP ' "$D20/opt.out")" = 9 ]; then
+  report c20_required_lang OK "required (rust, python) + no toolchains: 9 WRONG (exit $r1); not required: 9 SKIP (exit 0)"
 else
   report c20_required_lang WRONG "required exit=$r1 [$(head -1 "$D20/req.out")]; optional exit=$r2 [$(head -1 "$D20/opt.out")]"
 fi

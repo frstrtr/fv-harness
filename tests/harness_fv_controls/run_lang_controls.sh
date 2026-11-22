@@ -12,6 +12,12 @@
 #                      (b) a target with its own fuzz_target! (bypassing the driver) is ERROR
 #   c19_rust_profile_off  overflow-checks = false in the project's Cargo.toml, or in a
 #                      .cargo/config.toml cargo would read, is ERROR before any build
+#   c21_py_clean       correct Python implementation (Atheris), 10^6 runs: PASS
+#   c22_py_drift       a reduction one unit short: FAIL "oracle/implementation mismatch" within 10 s
+#   c23_py_wide        a fill adds 2^64 (a bug that reduction mod 2^64 would hide): FAIL "domain: ..."
+#   c24_py_vendored_tamper  (a) a vendored copy of the harness driver fv_diff.py passes untampered and,
+#                      with its comparison disabled, FAILs before any build; (b) a binding that
+#                      defines its own TestOneInput is ERROR
 #
 # Prints one "ID RESULT DETAIL" line per control. RESULT is SKIP when the language's toolchain is
 # not installed (it is then not tested, and the summary says so) — unless the language is listed in
@@ -33,19 +39,23 @@ lang_campaign() { # lang_campaign ID LANG DIR IMPL ARGS...
     > "$OUT/$id/run_fuzz.out" 2>&1
 }
 
+pin_id() { # pin_id NAME FILE -> the VENDORED.sha256 id whose pinned body equals FILE, or nothing
+  awk -v n="$1" -v h="$(sha256sum < "$2" | cut -d' ' -f1)" '!/^#/ && $2 == n && $3 == h { print $1; exit }' "$ROOT/fuzz/VENDORED.sha256"
+}
+absent() { # absent LANG WHERE CONTROLS... : SKIP each control, or WRONG if the language is required
+  local lang="$1" where="$2"; shift 2
+  if [[ " ${FV_REQUIRE_LANGS:-} " == *" $lang "* ]]; then
+    for c in "$@"; do echo "$c WRONG required language $lang (FV_REQUIRE_LANGS) but no toolchain at $where"; done
+    fails=1
+  else
+    for c in "$@"; do echo "$c SKIP $lang toolchain not installed ($where; docs/LANGUAGES.md)"; done
+  fi
+}
+
 R="$ROOT/examples/risk-limit-rust"
 if [ ! -x "${FV_RUST_HOME:-$FV_ROOT/rust}/cargo/bin/cargo-fuzz" ]; then
-  if [[ " ${FV_REQUIRE_LANGS:-} " == *" rust "* ]]; then
-    for c in c15_rust_clean c16_rust_drift c17_rust_overflow; do
-      echo "$c WRONG required language rust (FV_REQUIRE_LANGS) but no toolchain at ${FV_RUST_HOME:-$FV_ROOT/rust}"
-    done
-    exit 1
-  fi
-  for c in c15_rust_clean c16_rust_drift c17_rust_overflow; do
-    echo "$c SKIP Rust toolchain not installed (${FV_RUST_HOME:-$FV_ROOT/rust}; docs/LANGUAGES.md)"
-  done
-  exit 0
-fi
+  absent rust "${FV_RUST_HOME:-$FV_ROOT/rust}" c15_rust_clean c16_rust_drift c17_rust_overflow c18_rust_vendored_tamper c19_rust_profile_off
+else
 
 lang_campaign c15_rust_clean rust "$R" impl --runs 1000000
 rc=$?; j="$OUT/c15_rust_clean/run/fuzz.json"
@@ -76,7 +86,8 @@ fi
 
 # Control 18: the comparison loop is the harness's, vendored copies are pinned, no own loop.
 E18="$OUT/c18_ex"; rm -rf "$E18"; cp -r "$R" "$E18"; rm -rf "$E18/fuzz/target"
-{ echo "// Vendored from fv-harness v0.2.0 (fv_diff.rs), unchanged below this header."; echo "//"
+rid=$(pin_id fv_diff.rs "$ROOT/fuzz/rust/fv_diff.rs")
+{ echo "// Vendored from fv-harness ${rid:-UNPINNED} (fv_diff.rs), unchanged below this header."; echo "//"
   cat "$ROOT/fuzz/rust/fv_diff.rs"; } > "$E18/fuzz/fv_diff.rs"
 "$ROOT/fuzz/check_vendored.sh" "$E18/fuzz" > "$OUT/c18_untampered.json" 2>/dev/null; rc0=$?
 sed -i 's|        if !B::same(&want, &got) {|        if false \&\& !B::same(\&want, \&got) { // tampered|' "$E18/fuzz/fv_diff.rs"
@@ -89,10 +100,10 @@ lang_campaign c18b_rust_own_loop rust "$E18b" impl-drift --time 10
 rcb=$?; jb="$OUT/c18b_rust_own_loop/run/fuzz.json"
 if [ $rc0 -eq 0 ] && [ $rca -eq 1 ] && jq -e '.verdict == "FAIL" and (.detail | contains("fv_diff.rs"))' "$ja" > /dev/null \
    && [ ! -d "$OUT/c18_rust_vendored_tamper/run/cargo-target" ] \
-   && [ $rcb -eq 3 ] && jq -e '.detail | contains("fv_diff_main!")' "$jb" > /dev/null; then
+   && [ $rcb -eq 3 ] && jq -e '.detail | contains("fv_diff_main!")' "$jb" > /dev/null && [ -n "$rid" ]; then
   echo "c18_rust_vendored_tamper OK untampered vendored driver passes; tampered: FAIL before build ($(jq -r .detail "$ja")); own fuzz_target!: ERROR ($(jq -r '.detail | .[0:90]' "$jb"))"
 else
-  echo "c18_rust_vendored_tamper WRONG untampered_rc=$rc0 tampered exit=$rca [$(jq -r .detail "$ja" 2>/dev/null)] own-loop exit=$rcb [$(jq -r .detail "$jb" 2>/dev/null)]"; fails=1
+  echo "c18_rust_vendored_tamper WRONG pin=${rid:-none} untampered_rc=$rc0 tampered exit=$rca [$(jq -r .detail "$ja" 2>/dev/null)] own-loop exit=$rcb [$(jq -r .detail "$jb" 2>/dev/null)]"; fails=1
 fi
 
 # Control 19: the project cannot switch overflow checks off.
@@ -112,4 +123,52 @@ if [ -z "$bad" ]; then
 else
   echo "c19_rust_profile_off WRONG not refused: $bad"; fails=1
 fi
+fi  # rust
+
+P="$ROOT/examples/risk-limit-py"; PY="${FV_PY:-$FV_ROOT/py/venv/bin/python}"
+if ! { [ -x "$PY" ] && "$PY" -I -c 'import atheris' 2>/dev/null; }; then
+  absent python "$PY" c21_py_clean c22_py_drift c23_py_wide c24_py_vendored_tamper
+else
+lang_campaign c21_py_clean python "$P" impl --runs 1000000
+rc=$?; j="$OUT/c21_py_clean/run/fuzz.json"
+if [ $rc -eq 0 ] && [ "$(jq -r .verdict "$j")" = PASS ]; then
+  echo "c21_py_clean OK $(jq -r '"runs=\(.runs) seconds=\(.campaign_seconds | .[0:6]) \(.stats)"' "$j")"
+else
+  echo "c21_py_clean WRONG exit=$rc $(jq -c '{verdict, detail}' "$j" 2>/dev/null)"; fails=1
+fi
+lang_campaign c22_py_drift python "$P" impl-drift --time 10
+rc=$?; j="$OUT/c22_py_drift/run/fuzz.json"; t=$(jq -r '.campaign_seconds // ""' "$j" 2>/dev/null)
+if [ $rc -eq 1 ] && jq -e '.detail | contains("oracle/implementation mismatch")' "$j" > /dev/null \
+   && { [ -z "$t" ] || [ "$(echo "$t < 10" | bc)" = 1 ]; }; then
+  echo "c22_py_drift OK FAIL after ${t:-replay} s (limit 10 s)"
+else
+  echo "c22_py_drift WRONG exit=$rc $(jq -c '{verdict, detail, campaign_seconds}' "$j" 2>/dev/null)"; fails=1
+fi
+lang_campaign c23_py_wide python "$P" impl-wide --time 10
+rc=$?; j="$OUT/c23_py_wide/run/fuzz.json"
+if [ $rc -eq 1 ] && jq -e '.detail | startswith("domain:") and contains("outside [0, 2^64)")' "$j" > /dev/null; then
+  echo "c23_py_wide OK $(jq -r .detail "$j")"
+else
+  echo "c23_py_wide WRONG exit=$rc $(jq -c '{verdict, detail}' "$j" 2>/dev/null)"; fails=1
+fi
+E24="$OUT/c24_ex"; rm -rf "$E24"; cp -r "$P" "$E24"
+pid=$(pin_id fv_diff.py "$ROOT/fuzz/python/fv_diff.py")
+{ echo "# Vendored from fv-harness ${pid:-UNPINNED} (fv_diff.py), unchanged below this header."; echo "#"
+  cat "$ROOT/fuzz/python/fv_diff.py"; } > "$E24/fuzz/fv_diff.py"
+"$ROOT/fuzz/check_vendored.sh" "$E24/fuzz" > "$OUT/c24_untampered.json" 2>/dev/null; rc0=$?
+sed -i 's|        if not B.same(want, got):|        if False and not B.same(want, got):  # tampered|' "$E24/fuzz/fv_diff.py"
+grep -q '# tampered' "$E24/fuzz/fv_diff.py" || echo "c24 setup: tamper line not found" >&2
+lang_campaign c24_py_vendored_tamper python "$E24" impl-drift --time 10
+rca=$?; ja="$OUT/c24_py_vendored_tamper/run/fuzz.json"
+E24b="$OUT/c24b_ex"; rm -rf "$E24b"; cp -r "$P" "$E24b"
+printf '\n\ndef TestOneInput(data):  # own loop\n    pass\n' >> "$E24b/fuzz/binding.py"
+lang_campaign c24b_py_own_loop python "$E24b" impl-drift --time 10
+rcb=$?; jb="$OUT/c24b_py_own_loop/run/fuzz.json"
+if [ -n "$pid" ] && [ $rc0 -eq 0 ] && [ $rca -eq 1 ] && jq -e '.verdict == "FAIL" and (.detail | contains("fv_diff.py"))' "$ja" > /dev/null \
+   && [ ! -d "$OUT/c24_py_vendored_tamper/run/build" ] && [ $rcb -eq 3 ] && jq -e '.detail | contains("TestOneInput")' "$jb" > /dev/null; then
+  echo "c24_py_vendored_tamper OK untampered vendored driver passes; tampered: FAIL before build ($(jq -r .detail "$ja")); own TestOneInput: ERROR"
+else
+  echo "c24_py_vendored_tamper WRONG pin=${pid:-none} untampered_rc=$rc0 tampered exit=$rca [$(jq -r .detail "$ja" 2>/dev/null)] own-loop exit=$rcb [$(jq -r .detail "$jb" 2>/dev/null)]"; fails=1
+fi
+fi  # python
 exit $fails
