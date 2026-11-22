@@ -1,0 +1,17 @@
+name = "fv_risk_limit"
+version = "0.1.0"
+defaultTargets = ["RiskSpec", "Challenge"]
+
+# Trusted reference model, oracle and statements (spec owner, read-only to synthesis agents).
+[[lean_lib]]
+name = "RiskSpec"
+srcDir = "spec/challenge"
+
+[[lean_lib]]
+name = "Challenge"
+srcDir = "spec/challenge"
+
+# Agent-writable proofs.
+[[lean_lib]]
+name = "Solution"
+srcDir = "spec/solution"

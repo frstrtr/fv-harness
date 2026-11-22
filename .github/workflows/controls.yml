@@ -1,0 +1,93 @@
+# Proves the install path of docs/USAGE.md on a clean GitHub-hosted Ubuntu 24.04 runner:
+# A1 (prerequisites, Lean 4.36.0, the --compare checker) with the same commands as the docs, then
+# A2 (the acceptance control suite) and the end-to-end example. No secrets, no self-hosted runners.
+# Keep the commands below in step with docs/USAGE.md A1-A2.
+name: controls
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  controls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45    # a cold install plus the suite took about 18 minutes on a hosted runner
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: FV_ROOT under the runner's temp directory
+        run: echo "FV_ROOT=$RUNNER_TEMP/fv-harness" >> "$GITHUB_ENV"
+
+      - name: "A1: distribution packages, libFuzzer and sanitizers"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git curl jq bc python3 bubblewrap cmake clang
+          CLANG_MAJOR=$(clang --version | sed -n 's/.*clang version \([0-9]*\).*/\1/p' | head -1)
+          sudo apt-get install -y "libclang-rt-$CLANG_MAJOR-dev"      # libFuzzer and sanitizer runtimes
+
+          # libFuzzer + sanitizers work:
+          printf 'extern "C" int LLVMFuzzerTestOneInput(const unsigned char*, unsigned long) { return 0; }\n' > /tmp/fz.cc
+          clang++ -fsanitize=fuzzer,address,undefined /tmp/fz.cc -o /tmp/fz && /tmp/fz -runs=10 2>&1 | tail -1
+
+      - name: "A1: unprivileged bubblewrap (AppArmor profile for bwrap only if restricted)"
+        run: |
+          sysctl kernel.apparmor_restrict_unprivileged_userns || true
+          if ! bwrap --unshare-all --ro-bind / / --dev /dev --proc /proc true; then
+            echo "bwrap is restricted: adding the profile from docs/USAGE.md A1"
+            sudo tee /etc/apparmor.d/bwrap > /dev/null <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+            include if exists <local/bwrap>
+          }
+          PROFILE
+            sudo apparmor_parser -r /etc/apparmor.d/bwrap
+          fi
+          bwrap --unshare-all --ro-bind / / --dev /dev --proc /proc true && echo bwrap-ok
+
+      - name: "A1: Lean 4.36.0 and the --compare checker"
+        run: |
+          mkdir -p "$FV_ROOT/dl" "$FV_ROOT/src"
+          curl -sSfL -o "$FV_ROOT/dl/elan-init.sh" https://raw.githubusercontent.com/leanprover/elan/v4.4.0/elan-init.sh
+          echo "a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53  $FV_ROOT/dl/elan-init.sh" | sha256sum -c
+          ELAN_HOME="$FV_ROOT/elan" sh "$FV_ROOT/dl/elan-init.sh" -y --no-modify-path --default-toolchain none
+          export ELAN_HOME="$FV_ROOT/elan" PATH="$FV_ROOT/elan/bin:$PATH"
+          elan toolchain install leanprover/lean4:v4.36.0
+          "$FV_ROOT/elan/toolchains/leanprover--lean4---v4.36.0/bin/lean" --version
+
+          git clone https://github.com/leanprover/con-leche "$FV_ROOT/src/con-leche-master"
+          git -C "$FV_ROOT/src/con-leche-master" checkout 5ea446d5c79d23ef1f954215d094db2162f1ab6f
+          (cd "$FV_ROOT/src/con-leche-master" && lake build con-leche)     # uses its lean-toolchain: v4.36.0
+
+      - name: "A1: passwordless sudo for the audit's network namespace"
+        run: sudo -n true && echo sudo-ok
+
+      - name: "A2: acceptance control suite"
+        run: tests/harness_fv_controls/run_controls.sh "$FV_ROOT/runs/controls"
+
+      - name: "A2: end-to-end example (risk-limit)"
+        if: success() || failure()
+        run: examples/risk-limit/run.sh "$FV_ROOT/runs/risk-limit"
+
+      - name: Upload summaries
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: controls-summary
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/fv-harness/runs/controls/summary.txt
+            ${{ runner.temp }}/fv-harness/runs/controls/fuzz.out
+            ${{ runner.temp }}/fv-harness/runs/controls/*/gate.out
+            ${{ runner.temp }}/fv-harness/runs/controls/*/run/verdict.json
+            ${{ runner.temp }}/fv-harness/runs/risk-limit/gate/verdict.json
+            ${{ runner.temp }}/fv-harness/runs/risk-limit/fuzz-*/fuzz.json
+            ${{ runner.temp }}/fv-harness/runs/risk-limit/*.out

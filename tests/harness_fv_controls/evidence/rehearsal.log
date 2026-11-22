@@ -1,0 +1,16 @@
+OK    spec-lock: exit 0, state DECOMPOSE
+OK    decompose-1: exit 0, state DISCHARGE
+OK    discharge-same-failure-wall: exit 10, state DECOMPOSE
+OK    same-failure wall after 1 of 3 attempts
+OK    decompose-2: exit 0, state DISCHARGE
+OK    set-budget: exit 0, state DISCHARGE
+OK    discharge-budget-wall: exit 10, state DECOMPOSE
+OK    budget wall after 2 of 2 attempts (samples failed differently)
+OK    decompose-3: exit 0, state DISCHARGE
+OK    run-to-close: exit 0, state CLOSED
+OK    closure bundle present
+OK    closure records the Tier-2 escalation counters
+OK    illegal-transition: exit 3, state CLOSED
+OK    spec-lock: exit 0, state DECOMPOSE
+OK    tamper-blocked: exit 11, state BLOCKED
+EXIT=0

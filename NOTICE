@@ -1,0 +1,7 @@
+fv-harness
+Copyright 2026 frstrtr / Technocore Inc.
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It drives, but does not include, third-party tools and models; each keeps its own licence.
+See THIRD-PARTY.md for the list, the pinned versions and where each licence was verified.

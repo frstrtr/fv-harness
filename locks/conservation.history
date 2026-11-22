@@ -1,0 +1,3 @@
+# Lock history for fixtures/conservation (fixture only; real projects are locked by their human owner)
+2026-11-21  56f9dad16254f86d48673ac5e7da06ea5041b0c1742baaecab4904ea2c3cbad7  initial lock (two-account ledger)
+2026-11-21  64e0f8f79ee7b9abab6b94b3add35c36602463db041cb5c7fb626cf0bb6173e2  re-lock by the gate operator as fixture spec author, approved by the orchestrator: fee model (rounded-down basis points) and FVSpec.Oracle @[export] wrappers for Module 5

@@ -1,0 +1,14 @@
+# Released bodies of the harness files a project may vendor into its fuzz directory:
+# <harness commit> <file> <sha256 of the file as it is in the harness at that commit>
+# A vendored copy carries a comment header naming the commit ("Vendored from fv-harness <commit>");
+# run_fuzz.sh FAILs COUPLE unless the copy below its header hashes to the line for that commit.
+# A release tag (vX.Y.Z) must match exactly; a commit id may be abbreviated. Add lines for every
+# release, and for every commit that changes one of these files.
+4a75fba LeanOracle.cmake f234243d93f16cc6412c8834f5abb89f00af3a87cc90129931af0989fc07b14f
+9479b34 LeanOracle.cmake f234243d93f16cc6412c8834f5abb89f00af3a87cc90129931af0989fc07b14f
+72e3577ad0cc LeanOracle.cmake f234243d93f16cc6412c8834f5abb89f00af3a87cc90129931af0989fc07b14f
+4a75fba diff_oracle_template.cpp b8096790c7f49659c6dc358b650f5e0ff4dacd5c6500b085915e0aa1c01f7a88
+9479b34 diff_oracle_template.cpp 469a6e82e5e273ca6c9917e314272ce02fd5452920255b8855c0d15202de37c4
+72e3577ad0cc diff_oracle_template.cpp 469a6e82e5e273ca6c9917e314272ce02fd5452920255b8855c0d15202de37c4
+v0.1.0 LeanOracle.cmake e2c0d2f0ee623cebd888948895050da4728b4e6b52f7aa8860ef8689ccdacbeb
+v0.1.0 diff_oracle_template.cpp 469a6e82e5e273ca6c9917e314272ce02fd5452920255b8855c0d15202de37c4

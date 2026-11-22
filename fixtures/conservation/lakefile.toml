@@ -1,0 +1,17 @@
+name = "fv_conservation"
+version = "0.1.0"
+defaultTargets = ["FVSpec", "Challenge"]
+
+# Trusted reference model and statements (spec author owned, read-only to synthesis agents).
+[[lean_lib]]
+name = "FVSpec"
+srcDir = "spec/challenge"
+
+[[lean_lib]]
+name = "Challenge"
+srcDir = "spec/challenge"
+
+# Agent-writable proofs. Helper modules live under spec/solution/Solution/.
+[[lean_lib]]
+name = "Solution"
+srcDir = "spec/solution"

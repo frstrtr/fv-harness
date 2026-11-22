@@ -1,0 +1,9 @@
+gate: exit 0 (PASS)
+fuzz correct: exit 0 (PASS stat::number_of_executed_units: 1000000 stat::average_exec_per_sec:     38461 stat::new_units_added:          276 )
+fuzz buggy: exit 1 (FAIL: diff-oracle: MISMATCH at step 0 (0.090 s after start))
+    diff-oracle: MISMATCH at step 0 (0.090 s after start)
+      op     submit q=18446744073709551613
+      oracle limit=255 pos=0 open=9 last=0
+      impl   limit=255 pos=0 open=6 last=1
+    diff-oracle: reproducer written to $FV_ROOT/runs/risk-limit-oss-b8c4720/fuzz-buggy/artifacts/mismatch-9f80b586b2c62b21
+EXIT=0

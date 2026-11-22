@@ -1,0 +1,43 @@
+# fv-tier2@.service.in — system unit template for a remote GPU host: one Goedel-Prover-V2-8B
+# instance of the cascade's "main" Tier-2 stage per RTX 3060 12 GB (or larger) card.
+# prover/remote/install.sh --unit renders it (@USER@, @HOME@) as /etc/systemd/system/fv-tier2@.service.
+# Each instance reads @HOME@/fv-tier2/instances/<instance>.env (prover/remote/instance.example.env):
+#   GPU_UUID (pinned by UUID, never by index) and PORT.
+# Bound to 127.0.0.1 only; the gate host reaches it through the relay (prover/relay/).
+# CPU-capped so the host's other services keep their CPU.
+#   binaries: official llama.cpp b12387 release, unpacked by install.sh into ~/fv-tier2/llama-b12387
+#             (llama-b12387-bin-ubuntu-cuda-12.8-x64.tar.gz, sha256
+#             dd2231d2708a17d8f5e1b0455017d3cb7f446281607eaaece3935882e172a299; cudart bundle
+#             cudart-llama-b12387-bin-ubuntu-cuda-12.8-x64.tar.gz, sha256
+#             57c1f0e468422671fd49f88eb4fe444b0272a5977db23f31374250f7f08e180b)
+#   model:    Goedel-Prover-V2-8B.Q6_K.gguf, sha256 checked on every start
+# Sizing: Q6_K weights 6.7 GB + q8_0 KV for 4 slots x 8192 tokens (~2.4 GB) + compute buffers;
+# measured 8.7 GB of 12 GB in use on an RTX 3060 12 GB.
+# Enable:   sudo systemctl enable --now fv-tier2@<instance>
+# Rollback: sudo systemctl disable --now fv-tier2@<instance>  (rm the unit when no instance is left)
+[Unit]
+Description=FV harness Tier-2 prover %i: Goedel-Prover-V2-8B Q6_K (127.0.0.1 only)
+After=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@USER@
+WorkingDirectory=@HOME@/fv-tier2
+EnvironmentFile=@HOME@/fv-tier2/instances/%i.env
+Environment=CUDA_DEVICE_ORDER=PCI_BUS_ID
+Environment=LD_LIBRARY_PATH=@HOME@/fv-tier2/llama-b12387
+ExecStartPre=/bin/sh -c 'echo "43a23c094fd495304726f1471a9e10ca48997573278e306a555be1d3371aff3a  @HOME@/fv-tier2/models/Goedel-Prover-V2-8B.Q6_K.gguf" | sha256sum -c --quiet -'
+ExecStart=/bin/sh -c 'CUDA_VISIBLE_DEVICES="$GPU_UUID" exec @HOME@/fv-tier2/llama-b12387/llama-server \
+  -m @HOME@/fv-tier2/models/Goedel-Prover-V2-8B.Q6_K.gguf --alias goedel-prover-v2-8b \
+  --host 127.0.0.1 --port "$PORT" -c 32768 -np 4 -ngl 99 --flash-attn on \
+  --cache-type-k q8_0 --cache-type-v q8_0 -t 4 --metrics'
+Nice=10
+CPUQuota=400%
+MemoryMax=16G
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

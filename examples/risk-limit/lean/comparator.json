@@ -1,0 +1,7 @@
+{
+    "challenge_module": "Challenge",
+    "solution_module": "Solution",
+    "theorem_names": ["Risk.step_limit", "Risk.accept_iff", "Risk.step_preserves",
+                      "Risk.run_preserves", "Risk.step_fits"],
+    "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]
+}

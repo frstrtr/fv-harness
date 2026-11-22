@@ -1,0 +1,19 @@
+# fv-tier2-relay.service — user unit on the relay host (see relay.sh).
+# Install:  mkdir -p ~/.config/fv-harness ~/.config/systemd/user &&
+#           cp prover/relay/relay.sh ~/.config/fv-harness/ && cp config/hosts.env ~/.config/fv-harness/relay.env &&
+#           cp prover/relay/fv-tier2-relay.service ~/.config/systemd/user/ &&
+#           systemctl --user daemon-reload && systemctl --user enable --now fv-tier2-relay
+# Check:    ss -tlnp | grep <port>  must show 127.0.0.1 only, here, on the gate and on the GPU host.
+# Rollback: systemctl --user disable --now fv-tier2-relay
+[Unit]
+Description=FV harness Tier-2 relay: gate 127.0.0.1 -> remote GPU host 127.0.0.1 (loopback only)
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash %h/.config/fv-harness/relay.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

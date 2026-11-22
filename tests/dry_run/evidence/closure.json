@@ -1,0 +1,145 @@
+{
+  "task": "dryrun-conservation-02",
+  "closed": "2026-11-22T01:22:42+0400",
+  "source_digests": {
+    "lock_manifest": "64e0f8f79ee7b9abab6b94b3add35c36602463db041cb5c7fb626cf0bb6173e2",
+    "solution": {
+      "spec/solution/Solution.lean": "25eff609467a6568997d11032099452246bcd949ec8c24501d9a41b0c973af10"
+    },
+    "cpp_impl": {
+      "$FV_ROOT/harness/fixtures/conservation_cpp/impl/ledger.hpp": "49d9871606d004acf56a35f6a1ffd94ec39c8b639d3d6716b698580cfdca00b5"
+    }
+  },
+  "exports_sha256": {
+    "challenge": "96c6c5e6f5754cf98d4f1039ea5e5806b4ef58131ed3f9e4720a7f830d7f6c3f",
+    "solution": "5f9f938a8bb22afbbae29b97fcd4fa26e0edb8a7394ffc74c855abaa03cd0b31"
+  },
+  "gate": {
+    "verdict": "PASS",
+    "stages": {
+      "comparator_export": "PASS",
+      "comparator_native": "PASS",
+      "con_leche": "PASS",
+      "con_leche_compare": "PASS",
+      "con_ron": "PASS",
+      "config": "PASS",
+      "export": "PASS",
+      "lint": "PASS",
+      "lock": "PASS",
+      "netns": "PASS"
+    },
+    "run": "$FV_ROOT/tasks/dryrun-conservation-02/audit-1"
+  },
+  "comparator": {
+    "native": [
+      "Lean paranoid kernel accepts the solution",
+      "lean4lean kernel accepts the solution",
+      "nanoda kernel accepts the solution",
+      "con-leche kernel accepts the solution",
+      "con-ron kernel accepts the solution",
+      "Lean default kernel accepts the solution",
+      "Your solution is okay!"
+    ],
+    "from_export": [
+      "Lean default kernel accepts the solution",
+      "Your solution is okay!"
+    ]
+  },
+  "kernels": {
+    "con_leche": [
+      "con-leche: accepted 1426 declarations (--verified)"
+    ],
+    "con_ron": [
+      "con-ron: accepted 1426 declarations (--verified)"
+    ],
+    "con_leche_compare": [
+      "con-leche: accepted 484 declarations, 2 axioms justified by the solution $FV_ROOT/tasks/dryrun-conservation-02/audit-1/exports/solution.ndjson (1430 declarations accepted) (--verified)",
+      "con-leche: theorem FV.transfer_conserves justified by the solution",
+      "con-leche: theorem FV.transfer_source_le justified by the solution"
+    ]
+  },
+  "fuzz": {
+    "verdict": "PASS",
+    "runs": "1000000",
+    "max_total_time": "",
+    "campaign_seconds": "118.936493200",
+    "stats": "stat::number_of_executed_units: 1000000 stat::average_exec_per_sec:     8474 stat::new_units_added:          45 ",
+    "corpus": "$FV_ROOT/harness/fixtures/conservation_cpp/fuzz/corpus"
+  },
+  "provenance": [
+    "lean: Lean (version 4.36.0, x86_64-unknown-linux-gnu, commit 611c117bfaf7b7ae1cfcf246ce6fba31e8f509e9, Release)",
+    "expected lean commit: 611c117bfaf7b7ae1cfcf246ce6fba31e8f509e9",
+    "42678ccbc2605e2f892540dc7236e009fdd1224e823d104dfd72725d2f1a52d2  bundled/lake",
+    "db7f559d05795e7af52e42bc966c90240a39dcb9712161c54c97afa546e20c00  bundled/lean",
+    "8298d4412a1f8986b5dbfd1d9925211778d8d320fc47b72040c8fdfdd5b603d5  bundled/leanexport",
+    "2b2ff08805ace61c935b023f8114ac3f7f1d3bc79cb4e8c47ef7801a5af58798  bundled/leanchecker",
+    "cd9a6ddb5fbf8f649c789dc905236e1ddee9fb32a323c141a4e63478f72e47b6  bundled/leanchecker-paranoid",
+    "baaec030a70c78562ced2c75866ab0d2410e81ce680b835179ed16570ad5ef97  bundled/lean4lean",
+    "8241c5e6baa29490aa118d382f97961b208ae730fdb96545c2abed74c9ece5a8  bundled/nanoda_bin",
+    "a6380d68b4fb364189821dd4692569c11536de0a1e3aaefea06028c0d67bb193  bundled/con-leche",
+    "4e5616d94374cae37324dad2594f6230c2bb2297240249fc78ff508f3bc5acef  bundled/con-ron",
+    "f38aae2667960c4e4e10b536cd376b6cdd34b1859f0597abf23816a52412db4f  con-leche-master@5ea446d5c79d23ef1f954215d094db2162f1ab6f",
+    "bwrap: bubblewrap 0.11.1"
+  ],
+  "stubs": {
+    "mul_min_le": {
+      "file": "spec/solution/Solution.lean",
+      "status": "closed",
+      "attempts": 1,
+      "closed_by": "tier2 attempt 1"
+    }
+  },
+  "rounds": 1,
+  "history": [
+    {
+      "t": "2026-11-22T00:29:32+0400",
+      "from": "SPEC_LOCK",
+      "to": "DECOMPOSE",
+      "note": "spec locked: manifest digest 64e0f8f79ee7b9abab6b94b3add35c36602463db041cb5c7fb626cf0bb6173e2",
+      "log": "$FV_ROOT/tasks/dryrun-conservation-02/spec_lock.log"
+    },
+    {
+      "t": "2026-11-22T00:29:32+0400",
+      "from": "DECOMPOSE",
+      "to": "DISCHARGE",
+      "note": "skeleton by Tier-1 planner: tests/dry_run/skeleton/Solution.lean: 2 open stub(s) ['feeOf_le', 'transfer_source_le']",
+      "snapshot": "$FV_ROOT/tasks/dryrun-conservation-02/skeleton-0"
+    },
+    {
+      "t": "2026-11-22T01:18:55+0400",
+      "from": "DISCHARGE",
+      "to": "DECOMPOSE",
+      "note": "wall event: ['feeOf_le'] not closed after 2 x budget 8; Tier 1 re-decomposes",
+      "walls": [
+        "feeOf_le"
+      ]
+    },
+    {
+      "t": "2026-11-22T01:19:40+0400",
+      "from": "DECOMPOSE",
+      "to": "DISCHARGE",
+      "note": "skeleton by Tier-1 planner: tests/dry_run/redecompose_feeOf_le.py after wall event on feeOf_le: 1 open stub(s) ['mul_min_le']",
+      "snapshot": "$FV_ROOT/tasks/dryrun-conservation-02/skeleton-1"
+    },
+    {
+      "t": "2026-11-22T01:20:09+0400",
+      "from": "DISCHARGE",
+      "to": "AUDIT",
+      "note": "all 1 stub(s) closed by Tier 2"
+    },
+    {
+      "t": "2026-11-22T01:20:40+0400",
+      "from": "AUDIT",
+      "to": "COUPLE",
+      "note": "gate PASS: comparator_export=PASS comparator_native=PASS con_leche=PASS con_leche_compare=PASS con_ron=PASS config=PASS export=PASS lint=PASS lock=PASS netns=PASS",
+      "verdict": "$FV_ROOT/tasks/dryrun-conservation-02/audit-1/verdict.json"
+    },
+    {
+      "t": "2026-11-22T01:22:42+0400",
+      "from": "COUPLE",
+      "to": "CLOSE",
+      "note": "fuzz PASS: stat::number_of_executed_units: 1000000 stat::average_exec_per_sec:     8474 stat::new_units_added:          45 in 118.936493200s",
+      "fuzz": "$FV_ROOT/tasks/dryrun-conservation-02/couple-1/fuzz.json"
+    }
+  ]
+}
