@@ -1,0 +1,9 @@
+# Per-project settings read by fuzz/run_fuzz.sh.
+[evm]
+contract = "RiskLimit"          # the contract to deploy
+source = "RiskLimit.sol"        # its file in the implementation directory (all *.sol there are compiled together)
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 200
+# expect_runtime_sha256 = "..."  # the deployed contract's runtime bytecode, if one exists: a
+#                                # different compiler output is BLOCKED

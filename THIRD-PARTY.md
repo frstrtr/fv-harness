@@ -39,6 +39,13 @@ the model card's licence field and the licence file at the pinned revision.
 |---|---|---|---|
 | Atheris | 3.1.0 (cp314 manylinux x86_64 wheel sha256 `315a0b5c819852b1ffe1ca72efc389c7724881f2c33e4aacb8c6bcec49bd5011`) | Apache-2.0 | pypi.org/project/atheris, github.com/google/atheris |
 
+## EVM (optional; only for contracts under test)
+
+| Component | Pinned version | Licence | Source |
+|---|---|---|---|
+| solc (static Linux build) | 0.8.39+commit.ce47f2c8 (sha256 `b8b0642d46838575d3177628b685564b52f51f2aee546cb4dce781951d23c666`); a compiler, run as a separate program | GPL-3.0 | github.com/ethereum/solidity |
+| revm | 43.0.3 (crate checksum `62b2fbb3bdce72fef4f156e2164bdfde44dc3aeebc5b4f31a413fba0c09c524c`), `default-features = false, features = ["std"]`; 130 packages for linux x86_64, pinned in `examples/risk-limit-evm/fuzz/Cargo.lock`, all MIT, Apache-2.0, BSD-2/3-Clause, CC0-1.0 or Zlib | MIT | github.com/bluealloy/revm |
+
 ## Sandbox, compiler and fuzzer (distribution packages)
 
 | Component | Version used | Licence | Source |

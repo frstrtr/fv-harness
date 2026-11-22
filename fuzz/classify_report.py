@@ -158,7 +158,8 @@ def main():
                       "pct_inputs": round(100 * st["inputs"] / n_in, 2) if n_in else 0.0,
                       "pct_steps": round(100 * st["steps"] / n_steps, 2) if n_steps else 0.0,
                       **({"source": sources.get(c.split(": ", 1)[1], "")} if kind(c) == "domain" else {})})
-    not_exercised = [t["class"] for t in table if t["inputs"] == 0 and t["kind"] in ("generic", "domain")]
+    # outcome labels are informational unless the binding declared them (universe): then a 0 counts
+    not_exercised = [t["class"] for t in table if t["inputs"] == 0 and t["kind"] in ("generic", "domain", "outcome")]
 
     # exemplars: the smallest inputs per class, domain classes first, every hit class at least one
     by_hash = {}
@@ -183,8 +184,8 @@ def main():
     hdr_sha = hashlib.sha256(header.read_bytes()).hexdigest() if header and header.is_file() else None
     md = ["# Edge-case review deck", "",
           "Labels only: these classes never decide PASS/FAIL. They come from a replay of the corpus",
-          "through the Lean oracle alone, after the campaign; the C++ is not called in that replay.",
-          "For every corpus input below, the campaign checked that the C++ output equals the oracle",
+          "through the Lean oracle alone, after the campaign; the implementation is not called in",
+          "that replay. For every corpus input below, the campaign checked that the implementation's output equals the oracle",
           "output at every step.", "",
           f"- inputs classified: {n_in} (distinct), steps: {n_steps}",
           f"- regular (no edge class): {reg_inputs} inputs, {reg_steps} steps",

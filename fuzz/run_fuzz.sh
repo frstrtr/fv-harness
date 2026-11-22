@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # run_fuzz.sh — differential fuzz campaign (COUPLE stage, Module 5).
 #
-#   fuzz/run_fuzz.sh --lean-project DIR --lock LOCKFILE --cmake-dir DIR --target NAME [--lang cpp|rust]
+#   fuzz/run_fuzz.sh --lean-project DIR --lock LOCKFILE --cmake-dir DIR --target NAME [--lang cpp|rust|python|evm]
 #                    [--impl-dir DIR] [--runs N | --time SECONDS] [--corpus DIR]
 #                    [--no-merge] [--out RUNDIR]
 #
@@ -17,8 +17,17 @@
 #    it, FV_IMPL_DIR at --impl-dir and FV_DIFF_RS at the harness's driver (fuzz/rust/fv_diff.rs),
 #    which the target must use (fv_diff_main!, no fuzz_target! of its own). RUSTFLAGS forces
 #    overflow checks and debug assertions on; a project setting either off (Cargo.toml, any
-#    .cargo/config cargo would read) is ERROR. Toolchain: $FV_RUST_HOME (default $FV_ROOT/rust). Rust runs
-#    are not classified yet (labels only).
+#    .cargo/config cargo would read) is ERROR. Toolchain: $FV_RUST_HOME (default $FV_ROOT/rust). A second
+#    build with `--cfg fv_classify` is the labels-only classify binary (the binding's classes()).
+#    --lang evm: a Rust target as above whose implementation is a contract. --impl-dir (default
+#    CMAKE_DIR/../contract) holds the Solidity sources; [evm] in CMAKE_DIR/fv.toml names the contract,
+#    evmVersion and optimizer settings. solc must be the pinned build ($FV_SOLC, default
+#    $FV_ROOT/evm/solc-$FV_SOLC_VERSION, sha256 $FV_SOLC_SHA256), else ERROR. fuzz/evm/compile.py
+#    compiles it; the bytecode is embedded through FV_EVM_CREATION/FV_EVM_RUNTIME and run by the
+#    harness's EVM (fuzz/evm/fv_evm.rs, FV_EVM_RS). fuzz.json "evm" records the compiler sha256 and
+#    version, the settings, and the sha256 of the sources and both bytecodes. If fv.toml sets
+#    expect_runtime_sha256 (a deployed contract) and the runtime bytecode differs: BLOCKED. Cargo runs
+#    offline and Cargo.lock must not change during the build.
 #    --lang python: the same oracle library; the harness's driver fuzz/python/fv_diff.py (Atheris,
 #    $FV_PY, default $FV_ROOT/py/venv/bin/python) loads CMAKE_DIR/binding.py and the implementation
 #    from --impl-dir; implementation values outside [0, 2^64) FAIL as "domain: ...".
@@ -91,12 +100,12 @@ verdict() { # verdict EXIT VERDICT DETAIL
     --arg mm "$(grep -m1 'diff-oracle: MISMATCH' "$RUN/campaign.log" 2>/dev/null)" \
     --arg art "$(ls "$RUN"/artifacts/ 2>/dev/null | head -1)" \
     --arg stats "$(grep -E '^(stat::number_of_executed_units|stat::average_exec_per_sec|stat::new_units_added)' "$RUN/campaign.log" 2>/dev/null | tr '\n' ' ')" \
-    --argjson vend "${VENDORED_JSON:-{\}}" --argjson cls "${CLASSES_JSON:-null}" \
+    --argjson vend "${VENDORED_JSON:-{\}}" --argjson cls "${CLASSES_JSON:-null}" --argjson evm "${EVM_JSON:-null}" \
     --argjson lim "{\"timeout_s\":$T_OUT,\"rss_limit_mb\":$RSS_MB,\"malloc_limit_mb\":$MAL_MB,\"report_slow_units_s\":$SLOW_S}" \
     --arg slow "$(ls "$RUN"/artifacts/ 2>/dev/null | grep '^slow-unit-' | tr '\n' ' ')" \
     '{verdict:$v, exit:$e, detail:$d, target:$t, runs:$runs, max_total_time:$secs, impl_dir:$impl,
       corpus:$corpus, lock_digest:$lock, campaign_seconds:$el, mismatch:$mm, artifact:$art, stats:$stats,
-      vendored:$vend, classes:$cls, limits:$lim, slow_units:($slow | split(" ") | map(select(. != "")))}' \
+      vendored:$vend, classes:$cls, evm:$evm, limits:$lim, slow_units:($slow | split(" ") | map(select(. != "")))}' \
     > "$RUN/fuzz.json"
   note "fuzz verdict $2 (exit $1): $3"
   exit "$1"
@@ -137,10 +146,14 @@ case "$lang" in
       BIN_CLS="$RUN/build/${target}_classify"
     fi
     ;;
-  rust)
+  rust|evm)
     rh="${FV_RUST_HOME:-$FV_ROOT/rust}"
     [ -x "$rh/cargo/bin/cargo-fuzz" ] || verdict 3 ERROR "cargo-fuzz not installed under $rh (docs/LANGUAGES.md)"
-    impl_dir="$(cd "${impl:-$cmake_dir/../impl}" && pwd)"
+    if [ "$lang" = evm ]; then
+      impl_dir="$(cd "${impl:-$cmake_dir/../contract}" && pwd)"
+    else
+      impl_dir="$(cd "${impl:-$cmake_dir/../impl}" && pwd)"
+    fi
     # The comparison loop is the harness's (fuzz/rust/fv_diff.rs): the target must use it.
     tsrc="$cmake_dir/fuzz_targets/$target.rs"
     [ -f "$tsrc" ] || verdict 3 ERROR "no fuzz target source $tsrc"
@@ -160,15 +173,45 @@ case "$lang" in
              done; } | head -3)
     [ -z "$off" ] || verdict 3 ERROR "overflow checks or debug assertions switched off for the Rust build: $(echo "$off" | tr '\n' ' ')"
     while IFS= read -r v; do unset "$v"; done < <(env | sed -n 's/^\(CARGO_PROFILE_[A-Z0-9_]*\)=.*/\1/p')
+    unset CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_RUSTFLAGS
+    xenv=()
+    if [ "$lang" = evm ]; then
+      solc="${FV_SOLC:-$FV_ROOT/evm/solc-$FV_SOLC_VERSION}"
+      [ -x "$solc" ] || verdict 3 ERROR "solc not installed at $solc (docs/LANGUAGES.md)"
+      ssha=$(sha256sum < "$solc" | cut -d' ' -f1)
+      [ "$ssha" = "$FV_SOLC_SHA256" ] || verdict 3 ERROR "solc at $solc is not the pinned build: sha256 $ssha, pinned $FV_SOLC_SHA256"
+      if ! EVM_JSON=$(capped python3 -I "$HERE/evm/compile.py" --solc "$solc" --src-dir "$impl_dir" \
+                      --fv-toml "$cmake_dir/fv.toml" --out "$RUN/evm" 2> "$RUN/evm-compile.err"); then
+        EVM_JSON=null; verdict 3 ERROR "contract compilation failed: $(tail -1 "$RUN/evm-compile.err" | cut -c1-300)"
+      fi
+      EVM_JSON=$(jq -c --arg s "$ssha" '. + {solc_sha256: $s}' <<< "$EVM_JSON")
+      exp=$(jq -r .expect_runtime_sha256 <<< "$EVM_JSON"); got=$(jq -r .runtime_sha256 <<< "$EVM_JSON")
+      [ -z "$exp" ] || [ "$exp" = "$got" ] \
+        || verdict 2 BLOCKED "runtime bytecode sha256 $got differs from expect_runtime_sha256 $exp (fv.toml); not coupled"
+      xenv=(FV_EVM_RS="$HERE/evm/fv_evm.rs" FV_EVM_CREATION="$RUN/evm/creation.bin" FV_EVM_RUNTIME="$RUN/evm/runtime.bin"
+            FV_EVM_SPEC="$(jq -r .settings.evm_version <<< "$EVM_JSON")" CARGO_NET_OFFLINE=true)
+    fi
+    cargo_build() { # cargo_build TARGET_DIR EXTRA_RUSTFLAGS
+      (cd "$cmake_dir" && capped env RUSTUP_HOME="$rh/rustup" CARGO_HOME="$rh/cargo" PATH="$rh/cargo/bin:$PATH" \
+         FV_ORACLE_LIB_DIR="$RUN/build" FV_ORACLE_LIB="${target}_oracle" FV_IMPL_DIR="$impl_dir" \
+         FV_DIFF_RS="$HERE/rust/fv_diff.rs" "${xenv[@]}" RUSTFLAGS="-C overflow-checks=on -C debug-assertions=on$2" \
+         cargo fuzz build -a --fuzz-dir "$cmake_dir" --target-dir "$1" "$target")
+    }
+    lock0=$(sha256sum < "$cmake_dir/Cargo.lock" 2>/dev/null)
     if ! { capped cmake "${cfg[@]}" && capped cmake --build "$RUN/build" --target "${target}_oracle" -j "$FV_JOBS" \
-           && (cd "$cmake_dir" && RUSTUP_HOME="$rh/rustup" CARGO_HOME="$rh/cargo" PATH="$rh/cargo/bin:$PATH" \
-               FV_ORACLE_LIB_DIR="$RUN/build" FV_ORACLE_LIB="${target}_oracle" FV_IMPL_DIR="$impl_dir" \
-               FV_DIFF_RS="$HERE/rust/fv_diff.rs" RUSTFLAGS="-C overflow-checks=on -C debug-assertions=on" \
-               capped cargo fuzz build -a --fuzz-dir "$cmake_dir" --target-dir "$RUN/cargo-target" "$target"); } >> "$LOG" 2>&1; then
+           && cargo_build "$RUN/cargo-target" ""; } >> "$LOG" 2>&1; then
       verdict 3 ERROR "fuzzer build failed (see $LOG)"
+    fi
+    if [ "$lang" = evm ] && { [ ! -f "$cmake_dir/Cargo.lock" ] || [ "$(sha256sum < "$cmake_dir/Cargo.lock")" != "$lock0" ]; }; then
+      verdict 3 ERROR "Cargo.lock is missing or changed during the build: dependencies must be pinned in the committed Cargo.lock"
     fi
     BIN="$RUN/cargo-target/x86_64-unknown-linux-gnu/release/$target"
     [ -x "$BIN" ] || verdict 3 ERROR "cargo fuzz produced no binary at $BIN"
+    # The labels-only classify binary: a separate build with --cfg fv_classify (never compares).
+    if [ "${FV_NO_CLASSIFY:-0}" != 1 ] && cargo_build "$RUN/cargo-target-classify" " --cfg fv_classify" >> "$RUN/build-classify.log" 2>&1 \
+       && [ -x "$RUN/cargo-target-classify/x86_64-unknown-linux-gnu/release/$target" ]; then
+      BIN_CLS="$RUN/cargo-target-classify/x86_64-unknown-linux-gnu/release/$target"
+    fi
     impl="$impl_dir"
     ;;
   python)
@@ -191,7 +234,7 @@ case "$lang" in
     chmod +x "$BIN"
     impl="$impl_dir"
     ;;
-  *) verdict 3 ERROR "unknown --lang $lang (cpp|rust|python)" ;;
+  *) verdict 3 ERROR "unknown --lang $lang (cpp|rust|python|evm)" ;;
 esac
 classify_line_in() { # a verdict log must never come from the classify build
   local f; for f in "$@"; do [ -f "$f" ] && grep -q 'diff-oracle: CLASSIFY BUILD' "$f" && return 0; done; return 1

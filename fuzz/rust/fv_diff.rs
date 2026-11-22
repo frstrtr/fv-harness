@@ -8,7 +8,12 @@
 //   - the step loop: after EVERY step the oracle's and the implementation's states must be equal;
 //   - the mismatch report: both states printed, the input written to
 //     $FV_FUZZ_ARTIFACT_DIR/mismatch-<fnv1a>, exit status 86;
-//   - oracle initialisation with LeakSanitizer disabled for that block only.
+//   - oracle initialisation with LeakSanitizer disabled for that block only;
+//   - the classification replay (labels only), compiled ONLY into the separate classify binary
+//     (`--cfg fv_classify`, built by fuzz/run_fuzz.sh). It walks each input through the ORACLE
+//     only, records the binding's labels (`classes`) to $FV_CLASSIFY or prints them with
+//     FV_CLASSIFY_RENDER=1, and never compares. It prints "diff-oracle: CLASSIFY BUILD", which
+//     run_fuzz.sh refuses in any verdict log, so it can never stand in for the verdict binary.
 // A fuzz target includes it as
 //   #[macro_use] #[allow(dead_code)] mod fv_diff { include!(env!("FV_DIFF_RS")); }
 // (build.rs sets FV_DIFF_RS: the harness copy under fuzz/run_fuzz.sh, else a vendored copy that
@@ -70,8 +75,8 @@ impl<'a> Input<'a> {
 
 /// What a project provides: its state and operation types and the calls on both sides.
 pub trait Binding {
-    type State: Copy;
-    type Op: Copy;
+    type State: Clone;
+    type Op: Clone;
     /// An admissible initial state (one the statements' hypotheses allow).
     fn initial_state(inp: &mut Input) -> Self::State;
     fn make_op(inp: &mut Input, s: &Self::State) -> Self::Op;
@@ -85,6 +90,17 @@ pub trait Binding {
     fn show_op(op: &Self::Op) -> String;
     /// One oracle call on large values, inside the LeakSanitizer exemption.
     fn warm_up();
+    /// Labels for the classification replay (labels only, never compared), computed from the
+    /// step before, the operation and the ORACLE's state after it. Each label starts with
+    /// "outcome: " or "domain: ". Default: none.
+    fn classes(_before: &Self::State, _op: &Self::Op, _after: &Self::State) -> Vec<String> {
+        Vec::new()
+    }
+    /// The labels a reviewer should see exercised: any of these with no hit in the retained corpus
+    /// is reported NOT EXERCISED. Default: none.
+    fn class_universe() -> Vec<String> {
+        Vec::new()
+    }
 }
 
 extern "C" {
@@ -99,6 +115,8 @@ const MISMATCH_EXIT: i32 = 86;
 /// Starts the Lean runtime and the oracle modules. The runtime keeps process-lifetime allocations
 /// from its initialisation; only this block is exempt from LeakSanitizer (no suppression patterns).
 pub fn init<B: Binding>() {
+    #[cfg(fv_classify)]
+    eprintln!("diff-oracle: CLASSIFY BUILD (labels only, no comparison)");
     unsafe {
         __lsan_disable();
         let rc = fv_oracle_init();
@@ -139,6 +157,7 @@ fn mismatch<B: Binding>(data: &[u8], step: usize, before: &B::State, op: &B::Op,
 }
 
 /// One fuzz input: decode, then compare the oracle and the implementation after every step.
+#[cfg(not(fv_classify))]
 pub fn run<B: Binding>(data: &[u8]) {
     let mut inp = Input::new(data);
     let mut s = B::initial_state(&mut inp);
@@ -146,13 +165,78 @@ pub fn run<B: Binding>(data: &[u8]) {
     let saturate = inp.bool();
     let repeated = B::make_op(&mut inp, &s);
     for i in 0..steps {
-        let op = if saturate { repeated } else { B::make_op(&mut inp, &s) };
+        let op = if saturate { repeated.clone() } else { B::make_op(&mut inp, &s) };
         let want = B::oracle_step(&s, &op);
         let got = B::impl_step(&s, &op);
         if !B::same(&want, &got) {
             mismatch::<B>(data, i, &s, &op, &want, &got);
         }
         s = want;
+    }
+}
+
+#[cfg(fv_classify)]
+fn json_str(s: &str) -> String {
+    let mut o = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)),
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
+}
+
+/// Classification replay of one input (classify binary only): the oracle alone, labels only.
+#[cfg(fv_classify)]
+pub fn run<B: Binding>(data: &[u8]) {
+    use std::collections::BTreeMap;
+    let render = std::env::var_os("FV_CLASSIFY_RENDER").is_some();
+    let log = std::env::var("FV_CLASSIFY").ok().filter(|p| !p.is_empty());
+    let mut inp = Input::new(data);
+    let mut s = B::initial_state(&mut inp);
+    let steps = 1 + (inp.byte() % 64) as usize;
+    let saturate = inp.bool();
+    let repeated = B::make_op(&mut inp, &s);
+    let mut hits: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    let mut regular = 0usize;
+    if render {
+        println!("=== input {:016x} ({} bytes, {} steps{})", fnv1a(data), data.len(), steps,
+                 if saturate { ", one operation repeated" } else { "" });
+    }
+    for i in 0..steps {
+        let op = if saturate { repeated.clone() } else { B::make_op(&mut inp, &s) };
+        let want = B::oracle_step(&s, &op);
+        let cls = B::classes(&s, &op, &want);
+        if !cls.iter().any(|c| c.starts_with("domain: ")) {
+            regular += 1; // as in the C++ template: outcome labels alone leave a step regular
+        }
+        for c in &cls {
+            hits.entry(c.clone()).or_insert((i, 0)).1 += 1;
+        }
+        if render {
+            println!("--- step {i}");
+            println!("  before {}", B::show_state(&s));
+            println!("  op     {}", B::show_op(&op));
+            println!("  oracle {}", B::show_state(&want));
+            println!("  classes:{}", cls.iter().map(|c| format!(" [{c}]")).collect::<String>());
+        }
+        s = want;
+    }
+    if let Some(p) = log {
+        let h: Vec<String> = hits.iter().map(|(c, (f, n))| format!("{}:[{f},{n}]", json_str(c))).collect();
+        let u: Vec<String> = B::class_universe().iter().map(|c| json_str(c)).collect();
+        let line = format!("{{\"h\":\"{:016x}\",\"n\":{},\"steps\":{steps},\"regular\":{regular},\"impl_ns\":0,\"hits\":{{{}}},\"universe\":[{}]}}\n",
+                           fnv1a(data), data.len(), h.join(","), u.join(","));
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+            let _ = f.write_all(line.as_bytes());
+        }
+    }
+    if render {
+        let _ = std::io::stdout().flush();
     }
 }
 

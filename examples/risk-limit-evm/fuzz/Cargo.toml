@@ -1,0 +1,24 @@
+# Differential fuzzer: the RiskLimit contract (../contract, or the --impl-dir given to
+# fuzz/run_fuzz.sh --lang evm), executed in an in-process EVM, against the Lean oracle from the
+# signed spec (../../risk-limit/lean). Dependencies are pinned in Cargo.lock; builds run offline.
+[package]
+name = "risk-limit-evm-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+revm = { version = "=43.0.3", default-features = false, features = ["std"] }
+
+[[bin]]
+name = "diff_risk"
+path = "fuzz_targets/diff_risk.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

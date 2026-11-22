@@ -7,7 +7,7 @@ therefore be the side under test. The gate (AUDIT) is the same for every languag
 is only the COUPLE step: how the oracle is linked, which fuzzer drives inputs, and which sanitizers
 watch the implementation.
 
-`fuzz/run_fuzz.sh --lang cpp|rust|python` selects the build. The replay, campaign, merge, reproducers,
+`fuzz/run_fuzz.sh --lang cpp|rust|python|evm` selects the build. The replay, campaign, merge, reproducers,
 verdict codes and the edge-case classification replay stay the same wherever the fuzzer speaks
 libFuzzer's command line.
 
@@ -24,7 +24,7 @@ Checked at source on 2026-11-22.
 | Go | native fuzzing (`go test -fuzz`, Go 1.27, BSD-3-Clause) | cgo to the static library | `-asan` with clang | planned | A different engine and command line: it needs its own runner, and its corpus format differs. |
 | Java / Kotlin | Jazzer (Apache-2.0) | JNA or the Panama FFI on `oracle_shared` | none for JVM code; native parts can use ASan | planned | needs a JVM; GC timing makes per-input timeouts noisier |
 | TypeScript / JavaScript | Jazzer.js (Apache-2.0) | N-API or an FFI module on `oracle_shared` | none for JS | planned | Number vs BigInt: 64-bit values must be BigInt end to end |
-| Solidity / EVM | the harness's own runner around an in-process EVM; design in progress | the contract runs in the EVM; the oracle is called natively beside it | none; gas and energy are the cost measure | **Pack 4** (design) | A different shape (see below) |
+| Solidity / EVM | libFuzzer through cargo-fuzz; the contract runs in revm 43.0.3 (MIT), in process; solc 0.8.39 (GPL-3.0, used as a compiler) | the oracle is linked natively into the same process | ASan over the EVM and the binding; the contract itself has none (gas and energy are its cost measure) | **shipped** (`examples/risk-limit-evm`) | A different shape (see below) |
 
 ## Rust: setup, pins and measured results
 
@@ -90,8 +90,12 @@ arithmetic **wraps silently** unless the code uses `checked_*`, `wrapping_*` or 
 The fuzz build turns an overflow into a FAIL, even where production would wrap. That is usually
 what you want. If wrapping is intended, write `wrapping_*` explicitly so that both builds agree.
 
-**Not yet:** Rust runs are not classified (the edge-case classifier needs a Rust `describe()`).
-The verdict is unaffected.
+**Classification.** A Rust binding can implement `classes()` and `class_universe()`, which return
+labels computed from the step and the oracle's result. `run_fuzz.sh` then builds a second,
+labels-only binary with `--cfg fv_classify`. It replays the corpus through the oracle and never
+compares; the classifier report and review deck follow, as for C++. The generic boundary classes
+of the C++ `describe()` (field = 0, max, 2^k ...) have no Rust counterpart yet. Without
+`classes()`, a Rust run is classified with no labels. The verdict is unaffected either way.
 
 ## Python: setup, pins and measured results
 
@@ -205,3 +209,63 @@ A per-language drift control (a 1-unit error in that language's implementation) 
   statements such as "gas ≤ G for any state with ≤ N entries".
 - **Classifier.** The EVM outcomes (success, revert, the panic code) feed the outcome classes
   automatically.
+
+## EVM: setup, pins and what runs
+
+User-local, offline at run time.
+- **solc 0.8.39**: the official static Linux build, at `$FV_ROOT/evm/solc-0.8.39`, sha256
+  `b8b0642d46838575d3177628b685564b52f51f2aee546cb4dce781951d23c666`. The sha256 is pinned in
+  `config/pins.env` as `FV_SOLC_SHA256`, and any other binary is ERROR.
+- **revm 43.0.3**: crate checksum `62b2fbb3…c524c`. It is built with `default-features = false,
+  features = ["std"]`, so there are no C crypto libraries. Its tree is pinned in the example's
+  `Cargo.lock`: 130 packages for linux x86_64, all under permissive licences (MIT, Apache-2.0,
+  BSD, CC0, Zlib).
+- **cargo**: it runs offline. A `Cargo.lock` that changes during the build is ERROR.
+
+```sh
+mkdir -p "$FV_ROOT/evm/dl" && cd "$FV_ROOT/evm/dl"
+curl -sSfL -o solc-static-linux https://github.com/ethereum/solidity/releases/download/v0.8.39/solc-static-linux
+echo "b8b0642d46838575d3177628b685564b52f51f2aee546cb4dce781951d23c666  solc-static-linux" | sha256sum -c
+install -m 555 solc-static-linux "$FV_ROOT/evm/solc-0.8.39"
+# revm and its dependencies: fetched once into the cargo registry (Rust toolchain above)
+(cd examples/risk-limit-evm/fuzz && cargo +nightly-2026-11-10 fetch --locked)
+```
+
+**The split.**
+- **The harness owns three things:**
+  - the loop, `fuzz/rust/fv_diff.rs`, the same as for Rust;
+  - the EVM, `fuzz/evm/fv_evm.rs`. It deploys the creation code once, aborts unless the deployed
+    code equals the compiler's runtime bytecode byte for byte, makes committed calls with a fixed
+    gas limit, and reports each call as success, revert (with its data) or halt, together with the
+    return data and logs. Gas is kept outside the compared outcome.
+  - the compile step, `fuzz/evm/compile.py`. It runs solc's standard JSON, with no import callback
+    and nothing fetched.
+- **The project owns:**
+  - the contract;
+  - `fv.toml [evm]`: contract, evmVersion, optimizer and, optionally, `expect_runtime_sha256`;
+  - the binding. The binding maps the model's state to storage and an operation to a call. It says
+    which outcome the model implies, for example "rejected" = revert `LimitExceeded()`. It declares
+    the outcome classes it expects (`class_universe`).
+
+**Recorded and enforced.** `fuzz.json` → `evm` records:
+- the solc version and sha256;
+- the settings;
+- each source's sha256;
+- the sha256 of the creation and runtime bytecode.
+
+So a closure names exact bytecode. For a deployed contract, set `expect_runtime_sha256` to the
+deployed code's sha256. Different compiler output is then BLOCKED before any fuzzer build.
+
+**Outcome classes.** The labels-only classify binary (a separate `--cfg fv_classify` build of the
+same target) replays the corpus through the oracle. It records the outcome the model implies for
+each step, for example `outcome: submit(uint64) -> revert LimitExceeded()`. Any declared outcome
+with no hit in the retained corpus is listed as NOT EXERCISED. The same mechanism serves Rust
+targets that implement `classes()`.
+
+**What this covers, and what it does not.**
+- One contract and the callers the binding chooses. A model with external calls needs stubs with
+  declared behaviour. Reentrancy is out of scope unless modelled.
+- Contracts with immutables are refused, because their runtime code is known only after
+  deployment.
+- Opcodes outside the Ethereum instruction set (chain-specific extensions) are not in revm. A target
+  that uses them needs an executor for that chain.

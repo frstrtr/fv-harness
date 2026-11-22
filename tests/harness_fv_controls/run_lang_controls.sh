@@ -18,10 +18,25 @@
 #   c24_py_vendored_tamper  (a) a vendored copy of the harness driver fv_diff.py passes untampered and,
 #                      with its comparison disabled, FAILs before any build; (b) a binding that
 #                      defines its own TestOneInput is ERROR
+#   c25_evm_clean      the correct contract (solc 0.8.39, in-process EVM), with fv.toml pinning its
+#                      runtime bytecode sha256: PASS; fuzz.json records the pinned solc sha256; the
+#                      outcome classes include submit reverting LimitExceeded() and none is NOT EXERCISED
+#   c26_evm_drift      a reduction one unit short: FAIL "oracle/implementation mismatch" within 10 s
+#   c27_evm_overflow   (a) pos + open + q in checked uint64 arithmetic reverts with Panic(0x11) where
+#                      the model rejects: FAIL mismatch showing "panic 0x11"; (b) the same test inside
+#                      unchecked {} wraps and accepts: FAIL mismatch
+#   c28_evm_vendored_tamper  (a) a vendored copy of the harness EVM fv_evm.rs passes untampered and,
+#                      with reverts reported as successes, FAILs before any build; (b) a target with
+#                      its own fuzz_target! is ERROR
+#   c29_evm_pins       (a) a solc that is not the pinned build is ERROR before compiling; (b) a runtime
+#                      bytecode that differs from fv.toml's expect_runtime_sha256 is BLOCKED before any
+#                      fuzzer build
 #
 # Prints one "ID RESULT DETAIL" line per control. RESULT is SKIP when the language's toolchain is
 # not installed (it is then not tested, and the summary says so) — unless the language is listed in
 # FV_REQUIRE_LANGS (config/hosts.env), where a missing toolchain is WRONG. Exit 0 iff none is WRONG.
+# FV_LANG_CONTROLS (default "rust python evm") limits which languages run (for negatives; the full
+# suite, run_controls.sh, requires every line).
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$ROOT/scripts/lib.sh"
@@ -52,8 +67,11 @@ absent() { # absent LANG WHERE CONTROLS... : SKIP each control, or WRONG if the 
   fi
 }
 
+only() { [[ " ${FV_LANG_CONTROLS:-rust python evm} " == *" $1 "* ]]; }
+
 R="$ROOT/examples/risk-limit-rust"
-if [ ! -x "${FV_RUST_HOME:-$FV_ROOT/rust}/cargo/bin/cargo-fuzz" ]; then
+if ! only rust; then :
+elif [ ! -x "${FV_RUST_HOME:-$FV_ROOT/rust}/cargo/bin/cargo-fuzz" ]; then
   absent rust "${FV_RUST_HOME:-$FV_ROOT/rust}" c15_rust_clean c16_rust_drift c17_rust_overflow c18_rust_vendored_tamper c19_rust_profile_off
 else
 
@@ -126,7 +144,8 @@ fi
 fi  # rust
 
 P="$ROOT/examples/risk-limit-py"; PY="${FV_PY:-$FV_ROOT/py/venv/bin/python}"
-if ! { [ -x "$PY" ] && "$PY" -I -c 'import atheris' 2>/dev/null; }; then
+if ! only python; then :
+elif ! { [ -x "$PY" ] && "$PY" -I -c 'import atheris' 2>/dev/null; }; then
   absent python "$PY" c21_py_clean c22_py_drift c23_py_wide c24_py_vendored_tamper
 else
 lang_campaign c21_py_clean python "$P" impl --runs 1000000
@@ -171,4 +190,75 @@ else
   echo "c24_py_vendored_tamper WRONG pin=${pid:-none} untampered_rc=$rc0 tampered exit=$rca [$(jq -r .detail "$ja" 2>/dev/null)] own-loop exit=$rcb [$(jq -r .detail "$jb" 2>/dev/null)]"; fails=1
 fi
 fi  # python
+
+X="$ROOT/examples/risk-limit-evm"; SOLC="${FV_SOLC:-$FV_ROOT/evm/solc-$FV_SOLC_VERSION}"
+if ! only evm; then :
+elif [ ! -x "${FV_RUST_HOME:-$FV_ROOT/rust}/cargo/bin/cargo-fuzz" ] || [ ! -x "$SOLC" ]; then
+  absent evm "${FV_RUST_HOME:-$FV_ROOT/rust} + $SOLC" c25_evm_clean c26_evm_drift c27_evm_overflow c28_evm_vendored_tamper c29_evm_pins
+else
+E25="$OUT/c25_ex"; rm -rf "$E25"; cp -r "$X" "$E25"
+rt=$(python3 -I "$ROOT/fuzz/evm/compile.py" --solc "$SOLC" --src-dir "$E25/contract" --fv-toml "$E25/fuzz/fv.toml" --out "$OUT/c25_compile" | jq -r .runtime_sha256)
+printf 'expect_runtime_sha256 = "%s"\n' "$rt" >> "$E25/fuzz/fv.toml"
+lang_campaign c25_evm_clean evm "$E25" contract --runs "${FV_EVM_CLEAN_RUNS:-1000000}"
+rc=$?; j="$OUT/c25_evm_clean/run/fuzz.json"
+if [ $rc -eq 0 ] && [ "$(jq -r .verdict "$j")" = PASS ] && [ "$(jq -r .evm.solc_sha256 "$j")" = "$FV_SOLC_SHA256" ] \
+   && [ "$(jq -r .evm.runtime_sha256 "$j")" = "$rt" ] && [ "$(jq '.classes.not_exercised | length' "$j")" = 0 ] \
+   && jq -e '[.classes.classes[] | select(.class == "outcome: submit(uint64) -> revert LimitExceeded()" and .inputs > 0)] | length == 1' "$j" > /dev/null; then
+  echo "c25_evm_clean OK $(jq -r '"runs=\(.runs) seconds=\(.campaign_seconds | .[0:6]) runtime=\(.evm.runtime_sha256 | .[0:12]) (pinned) solc=\(.evm.solc_sha256 | .[0:12]) classes=\([.classes.classes[] | select(.kind == "outcome")] | length) not_exercised=0 \(.stats)"' "$j")"
+else
+  echo "c25_evm_clean WRONG exit=$rc $(jq -c '{verdict, detail, evm: (.evm | {solc_sha256, runtime_sha256}), not_exercised: .classes.not_exercised, cls_error: .classes.error}' "$j" 2>/dev/null)"; fails=1
+fi
+FV_NO_CLASSIFY=1 lang_campaign c26_evm_drift evm "$X" contract-drift --time 10
+rc=$?; j="$OUT/c26_evm_drift/run/fuzz.json"; t=$(jq -r '.campaign_seconds // ""' "$j" 2>/dev/null)
+if [ $rc -eq 1 ] && jq -e '.detail | contains("oracle/implementation mismatch")' "$j" > /dev/null \
+   && { [ -z "$t" ] || [ "$(echo "$t < 10" | bc)" = 1 ]; }; then
+  echo "c26_evm_drift OK FAIL after ${t:-replay} s (limit 10 s)"
+else
+  echo "c26_evm_drift WRONG exit=$rc $(jq -c '{verdict, detail, campaign_seconds}' "$j" 2>/dev/null)"; fails=1
+fi
+FV_NO_CLASSIFY=1 lang_campaign c27_evm_overflow evm "$X" contract-overflow --time 10
+rca=$?; ja="$OUT/c27_evm_overflow/run/fuzz.json"
+FV_NO_CLASSIFY=1 lang_campaign c27b_evm_wrap evm "$X" contract-wrap --time 10
+rcb=$?; jb="$OUT/c27b_evm_wrap/run/fuzz.json"
+if [ $rca -eq 1 ] && jq -e '.detail | contains("oracle/implementation mismatch")' "$ja" > /dev/null \
+   && grep -q 'impl .*panic 0x11' "$OUT/c27_evm_overflow/run/campaign.log" \
+   && [ $rcb -eq 1 ] && jq -e '.detail | contains("oracle/implementation mismatch")' "$jb" > /dev/null; then
+  echo "c27_evm_overflow OK checked: FAIL, the contract $(grep -m1 -oE 'impl .*panic 0x11' "$OUT/c27_evm_overflow/run/campaign.log" | grep -oE 'panic 0x11') where the model rejects; unchecked: FAIL ($(grep -m1 -A3 'diff-oracle: MISMATCH' "$OUT/c27b_evm_wrap/run/campaign.log" | grep -m1 -oE 'op +[a-z]+\(uint64\) q=[0-9]+'))"
+else
+  echo "c27_evm_overflow WRONG checked exit=$rca [$(jq -r .detail "$ja" 2>/dev/null)] unchecked exit=$rcb [$(jq -r .detail "$jb" 2>/dev/null)]"; fails=1
+fi
+E28="$OUT/c28_ex"; rm -rf "$E28"; cp -r "$X" "$E28"
+eid=$(pin_id fv_evm.rs "$ROOT/fuzz/evm/fv_evm.rs")
+{ echo "// Vendored from fv-harness ${eid:-UNPINNED} (fv_evm.rs), unchanged below this header."; echo "//"
+  cat "$ROOT/fuzz/evm/fv_evm.rs"; } > "$E28/fuzz/fv_evm.rs"
+"$ROOT/fuzz/check_vendored.sh" "$E28/fuzz" > "$OUT/c28_untampered.json" 2>/dev/null; rc0=$?
+sed -i 's|ExecutionResult::Revert { output, .. } => Outcome { kind: Kind::Revert,|ExecutionResult::Revert { output, .. } => Outcome { kind: Kind::Success, /* tampered */|' "$E28/fuzz/fv_evm.rs"
+grep -q 'tampered' "$E28/fuzz/fv_evm.rs" || echo "c28 setup: tamper line not found" >&2
+FV_NO_CLASSIFY=1 lang_campaign c28_evm_vendored_tamper evm "$E28" contract --time 10
+rca=$?; ja="$OUT/c28_evm_vendored_tamper/run/fuzz.json"
+E28b="$OUT/c28b_ex"; rm -rf "$E28b"; cp -r "$X" "$E28b"
+printf '\nlibfuzzer_sys::fuzz_target!(|data: &[u8]| { let _ = data; });\n' >> "$E28b/fuzz/fuzz_targets/diff_risk.rs"
+FV_NO_CLASSIFY=1 lang_campaign c28b_evm_own_target evm "$E28b" contract --time 10
+rcb=$?; jb="$OUT/c28b_evm_own_target/run/fuzz.json"
+if [ -n "$eid" ] && [ $rc0 -eq 0 ] && [ $rca -eq 1 ] && jq -e '.verdict == "FAIL" and (.detail | contains("fv_evm.rs"))' "$ja" > /dev/null \
+   && [ ! -d "$OUT/c28_evm_vendored_tamper/run/cargo-target" ] && [ $rcb -eq 3 ] && jq -e '.detail | contains("fv_diff_main!")' "$jb" > /dev/null; then
+  echo "c28_evm_vendored_tamper OK untampered vendored EVM passes; tampered: FAIL before build ($(jq -r .detail "$ja")); own fuzz_target!: ERROR"
+else
+  echo "c28_evm_vendored_tamper WRONG pin=${eid:-none} untampered_rc=$rc0 tampered exit=$rca [$(jq -r .detail "$ja" 2>/dev/null)] own-target exit=$rcb [$(jq -r .detail "$jb" 2>/dev/null)]"; fails=1
+fi
+B29="$OUT/c29_solc"; mkdir -p "$B29"; cp "$SOLC" "$B29/solc"; printf '\0' >> "$B29/solc"
+FV_SOLC="$B29/solc" FV_NO_CLASSIFY=1 lang_campaign c29_evm_solc evm "$X" contract --time 10
+rca=$?; ja="$OUT/c29_evm_solc/run/fuzz.json"
+E29="$OUT/c29_ex"; rm -rf "$E29"; cp -r "$X" "$E29"
+printf 'expect_runtime_sha256 = "%064d"\n' 0 >> "$E29/fuzz/fv.toml"
+FV_NO_CLASSIFY=1 lang_campaign c29b_evm_runtime evm "$E29" contract --time 10
+rcb=$?; jb="$OUT/c29b_evm_runtime/run/fuzz.json"
+if [ $rca -eq 3 ] && jq -e '.detail | contains("not the pinned build")' "$ja" > /dev/null && [ ! -d "$OUT/c29_evm_solc/run/evm" ] \
+   && [ $rcb -eq 2 ] && jq -e '.verdict == "BLOCKED" and (.detail | contains("expect_runtime_sha256"))' "$jb" > /dev/null \
+   && [ ! -d "$OUT/c29b_evm_runtime/run/cargo-target" ]; then
+  echo "c29_evm_pins OK other solc: ERROR before compiling; runtime bytecode not the expected one: BLOCKED before any fuzzer build"
+else
+  echo "c29_evm_pins WRONG solc exit=$rca [$(jq -r .detail "$ja" 2>/dev/null)] runtime exit=$rcb [$(jq -r .detail "$jb" 2>/dev/null)]"; fails=1
+fi
+fi  # evm
 exit $fails
