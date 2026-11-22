@@ -16,6 +16,8 @@ Tested in two places:
 
 ### A1. Prerequisites (one gate machine, x86-64 Linux)
 
+Machine sizes, minimum and recommended, and the optional GPU prover models: `docs/HARDWARE.md`.
+
 | Component | Version | Why |
 |---|---|---|
 | Ubuntu | 24.04 or 26.04 | reference OS |

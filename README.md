@@ -22,6 +22,7 @@ The pipeline:
   codecs) and where it does not.
 - `docs/CASE-STUDIES.md`: what it found on first use.
 - `examples/risk-limit/`: a pre-trade risk check, with a correct and an overflow-buggy C++ variant.
+- `docs/HARDWARE.md`: machine profiles (minimum and recommended) and the prover models by GPU class. No GPU is needed for the gate.
 
 Licence: Apache-2.0 (`LICENSE`, `NOTICE`). Third-party tools and models are referenced, not
 vendored (`THIRD-PARTY.md`). Commit ids cited in reports refer to the development history from
