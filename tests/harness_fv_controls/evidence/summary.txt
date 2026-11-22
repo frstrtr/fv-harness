@@ -8,30 +8,31 @@ c4b_shadow_def         OK     exit=1 | comparator_export=FAIL comparator_native=
 c5a_sandbox_write      OK     challenge write blocked (exit 2: /bin/sh: 1: cannot create spec/challenge/Challenge.lean: Read-only file system ); solution write allowed
 c5b_tamper             OK     exit=2 BLOCKED before audit: -b21cf545bafb8ecdfc06d9999f598f507e7e3b4d0876ee2007d1faf4cad2cdbe  spec/challenge/Challenge.lean
 c5c_unsigned_relock    OK     exit=2 BLOCKED before audit: BLOCKED: bad signature: Signature verification failed: incorrect signature
-c5d_key_swap           OK     pinned: exit=2 BLOCKED, mismatch banner; pins swapped too: gate exit=0 (not stoppable in-band) but first output line and verdict.json name signer SHA256:DI96BWBI0Rxz4mIoRSzxkl8HuQVUm/kyzmEhOsRQh20 != recorded SHA256:R6l4wkshUPWT3e1nrbQysrKihLdvMoY9Sh+q9EfNtMw; pin swap = 4-line diff
-c1_fuzz                OK     runs=1000000 seconds=115.657832570 stat::number_of_executed_units: 1000000 stat::average_exec_per_sec:     8695 stat::new_units_added:          23  leak_reports=0
+c5d_key_swap           OK     pinned: exit=2 BLOCKED, mismatch banner; pins swapped too: gate exit=0 (not stoppable in-band) but first output line and verdict.json name signer SHA256:8j7CuJijAWDHhqr2dq83X8jDmVXz0UbOx+f7AnyFnOE != recorded SHA256:R6l4wkshUPWT3e1nrbQysrKihLdvMoY9Sh+q9EfNtMw; pin swap = 4-line diff
+c1_fuzz                OK     runs=1000000 seconds=128.530327585 stat::number_of_executed_units: 1000000 stat::average_exec_per_sec:     7874 stat::new_units_added:          17  leak_reports=0
 c6_cpp_drift           OK     FAIL after 0.022s (limit 10s); reproducer mismatch-1b402f3e312d19b9; diff-oracle: MISMATCH at step 0 (0.022 s after start); oracle a=18446744073709551357 b=250 fee=6; impl a=18446744073709551357 b=249 fee=7;
 c7_lsan_leak           OK     leak reported: Direct leak of 32 byte(s) in 1 object(s) allocated from:; ledger::transfer() at ledger.hpp:25:23
 c8_vendored_tamper     OK     untampered pair passes; tampered template: FAIL before build: vendored harness file differs from the harness copy at its cited commit: diff_oracle_template.cpp (commit v0.2.0) ; body 06e23829b31f != pinned 545e13f73bf9
-c9_edge_not_exercised  OK     verdict PASS; NOT EXERCISED: [domain: fee rate above the cap (bps > 10000)]; c1 normal generator: 68 inputs; 148 inputs, 29 classes hit, 7 not exercised
+c9_edge_not_exercised  OK     verdict PASS; NOT EXERCISED: [domain: fee rate above the cap (bps > 10000)]; c1 normal generator: 62 inputs; 150 inputs, 28 classes hit, 8 not exercised
 c10_leak_class         OK     regression replay failed on the persisted corpus: LEAK: Direct leak of 64 byte(s) in 2 object(s); finding classes: domain: amount exceeds the balance (amt > a), domain: fee rounds to zero on a nonzero transfer
 c11_hang               OK     regression replay failed on the persisted corpus: HANG: input exceeded 2 s; stopped at: timeout after 3 seconds; reproducer timeout-c538cf3e64643903d409c7fce8ba5dfb9932f9a7; limits {"timeout_s":2,"rss_limit_mb":2048,"malloc_limit_mb":2048,"report_slow_units_s":2,"max_len":null,"len_control":null}
-c12_growth             OK     regression replay failed on the persisted corpus: OOM: out-of-memory (used: 394Mb; limit: 256Mb); stopped at: out-of-memory (used: 394Mb; limit: 256Mb); reproducer oom-32551b7d613eb5b86da06f4566b2ab36f7634099; limits {"timeout_s":10,"rss_limit_mb":256,"malloc_limit_mb":256,"report_slow_units_s":2,"max_len":null,"len_control":null}
-c13_classify_env       OK     env exported, still FAIL: regression replay failed on the persisted corpus: oracle/implementation mismatch (diff-oracle: MISMATCH at step 0 (0.022 s after start)); nm: verdict binary 0 classify markers, classify binary 1
+c12_growth             OK     regression replay failed on the persisted corpus: OOM: out-of-memory (used: 406Mb; limit: 256Mb); stopped at: out-of-memory (used: 406Mb; limit: 256Mb); reproducer oom-d395e88e7586002fcdddb3c40927792e3d8d5178; limits {"timeout_s":10,"rss_limit_mb":256,"malloc_limit_mb":256,"report_slow_units_s":2,"max_len":null,"len_control":null}
+c13_classify_env       OK     env exported, still FAIL: regression replay failed on the persisted corpus: oracle/implementation mismatch (diff-oracle: MISMATCH at step 0 (0.023 s after start)); nm: verdict binary 0 classify markers, classify binary 1
 c14_zero_limits        OK     timeout=0, rss_limit_mb=0, malloc_limit_mb=0 each refused: ERROR exit 3 before build (fv.toml: limits must be positive whole numbers (0 disables a limit; len_control may be 0): timeout=0)
 c30_draft_not_countable OK     --draft: "DRAFT PASS" (first key draft, fuzz.log line 1 DRAFT, corpus 106 -> 106 files); same manifest without --draft: BLOCKED; task: SPEC_LOCK -> BLOCKED; CLOSE on a draft fuzz.json: ERROR, no closure
 c32_len_limits         OK     max_len=0, len_control=-1: ERROR before build; max_len=300 len_control=0: campaign at lim 300, recorded {"max_len":300,"len_control":0}; c1 records null
-c15_rust_clean         OK     runs=1000000 seconds=41.804 stat::number_of_executed_units: 1000000 stat::average_exec_per_sec:     24390 stat::new_units_added:          233  leak_reports=0
-c16_rust_drift         OK     FAIL after .225615712 s (limit 10 s); rel/lang/c16_rust_drift/run/campaign.log:diff-oracle: MISMATCH at step 0; op reduce q=3080310; oracle limit=4294967296 pos=1514077729 open=502208557 last=0; impl limit=4294967296 pos=1514077730 open=502208557 last=0;
-c17_rust_overflow      OK     panic: panicked at <harness>/examples/risk-limit-rust/impl-overflow/lib.rs:18:16: attempt to add with overflow  (after .2508 s)
+c48_record_failure     OK     fuzz.json writer failing: a run that would PASS and one that would FAIL each end ERROR (exit 3), record says ERROR
+c15_rust_clean         OK     runs=1000000 seconds=77.400 stat::number_of_executed_units: 1000000 stat::average_exec_per_sec:     13157 stat::new_units_added:          246  leak_reports=0
+c16_rust_drift         OK     FAIL after .232134849 s (limit 10 s); ev/controls/lang/c16_rust_drift/run/campaign.log:diff-oracle: MISMATCH at step 0; op reduce q=62975; oracle limit=3 pos=0 open=0 last=0; impl limit=3 pos=1 open=0 last=0;
+c17_rust_overflow      OK     panic: (1965024) panicked at <harness>/examples/risk-limit-rust/impl-overflow/lib.rs:18:16: attempt to add with overflow  (after .2140 s)
 c18_rust_vendored_tamper OK     untampered vendored driver passes; tampered: FAIL before build (vendored harness file differs from the harness copy at its cited commit: fv_diff.rs (commit v0.2.0) ); own fuzz_target!: ERROR (the Rust fuzz target must end with fv_diff_main!(...) and define no fuzz_target! of its ow)
 c19_rust_profile_off   OK     overflow-checks = false in Cargo.toml and in .cargo/config.toml each refused: ERROR before build
-c21_py_clean           OK     runs=1000000 seconds=147.92 stat::number_of_executed_units: 1000000 stat::average_exec_per_sec:     6802 stat::new_units_added:          93
-c22_py_drift           OK     FAIL after .332728294 s (limit 10 s)
-c23_py_wide            OK     domain: at step 0 (pos = 18446744073709559317 is outside [0, 2^64))
+c21_py_clean           OK     runs=1000000 seconds=114.92 stat::number_of_executed_units: 1000000 stat::average_exec_per_sec:     8771 stat::new_units_added:          116
+c22_py_drift           OK     FAIL after .275129449 s (limit 10 s)
+c23_py_wide            OK     domain: at step 0 (pos = 18446744073709551618 is outside [0, 2^64))
 c24_py_vendored_tamper OK     untampered vendored driver passes; tampered: FAIL before build (vendored harness file differs from the harness copy at its cited commit: fv_diff.py (commit v0.2.0) ); own TestOneInput: ERROR
-c25_evm_clean          OK     runs=1000000 seconds=1840.2 runtime=919af9e57652 (pinned) solc=b8b0642d4683 classes=5 not_exercised=0 stat::number_of_executed_units: 1000000 stat::average_exec_per_sec:     543 stat::new_units_added:          443
-c26_evm_drift          OK     FAIL after 7350 executions, 8.301975426 s (limits 50,000 executions, 60 s)
+c25_evm_clean          OK     runs=1000000 seconds=2016.2 runtime=919af9e57652 (pinned) solc=b8b0642d4683 classes=5 not_exercised=0 stat::number_of_executed_units: 1000000 stat::average_exec_per_sec:     496 stat::new_units_added:          450
+c26_evm_drift          OK     FAIL after 4475 executions, 4.063546686 s (limits 50,000 executions, 60 s)
 c27_evm_overflow       OK     checked: FAIL, the contract panic 0x11 where the model rejects; unchecked: FAIL (op     submit(uint64) q=18446744073709551613)
 c28_evm_vendored_tamper OK     untampered vendored EVM passes; tampered: FAIL before build (vendored harness file differs from the harness copy at its cited commit: fv_evm.rs (commit v0.2.0) ); own fuzz_target!: ERROR
 c29_evm_pins           OK     other solc: ERROR before compiling; runtime bytecode not the expected one: BLOCKED before any fuzzer build

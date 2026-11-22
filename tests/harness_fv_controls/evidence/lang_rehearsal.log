@@ -1,0 +1,8 @@
+OK    cpp: CLOSED, closure fuzz.lang cpp, impl 1 file(s) from cpp/impl
+OK    cpp: drift (cpp/impl-buggy) -> CPP_BUGFIX: oracle/implementation mismatch
+OK    rust: CLOSED, closure fuzz.lang rust, impl 1 file(s) from impl
+OK    rust: drift (impl-drift) -> CPP_BUGFIX: oracle/implementation mismatch
+OK    python: CLOSED, closure fuzz.lang python, impl 1 file(s) from impl
+OK    python: drift (impl-drift) -> CPP_BUGFIX: oracle/implementation mismatch
+OK    evm: CLOSED, closure fuzz.lang evm, impl 1 file(s) from contract, evm pins recorded
+OK    evm: drift (contract-drift) -> CPP_BUGFIX: oracle/implementation mismatch
