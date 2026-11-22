@@ -145,9 +145,13 @@ def cmd_init(a):
     t.dir.mkdir(parents=True)
     st = {"task": a.task, "created": now(), "state": "SPEC_LOCK",
           "project": str(pathlib.Path(a.project).resolve()), "lock": str(pathlib.Path(a.lock).resolve()),
-          "cpp": {"cmake_dir": str(pathlib.Path(a.cmake_dir).resolve()), "target": a.target,
-                  "impl_dir": str(pathlib.Path(a.impl_dir or pathlib.Path(a.cmake_dir) / ".." / "impl").resolve()),
-                  "runs": a.fuzz_runs, "time": a.fuzz_time},
+          # "cpp" is the historical name of the fuzz settings; "lang" says which language they are for.
+          # impl_dir: as given; else, for C++ only, CMAKE_DIR/../impl (run_fuzz.sh picks the other
+          # languages' defaults, and records the directory it used).
+          "cpp": {"cmake_dir": str(pathlib.Path(a.cmake_dir).resolve()), "target": a.target, "lang": a.lang,
+                  "impl_dir": (str(pathlib.Path(a.impl_dir).resolve()) if a.impl_dir else
+                               str((pathlib.Path(a.cmake_dir) / ".." / "impl").resolve()) if a.lang == "cpp" else None),
+                  "impl_dir_given": bool(a.impl_dir), "runs": a.fuzz_runs, "time": a.fuzz_time},
           "stubs": {}, "history": [], "rounds": 0, "tier2_stats": {k: 0 for k in STAT_KEYS}}
     d = tier2_defaults()
     st["budget"] = a.budget if a.budget is not None else d["budget"]
@@ -320,16 +324,32 @@ def cmd_audit(a):
     return 3
 
 
+def fuzz_lang(st) -> str:
+    return st["cpp"].get("lang") or "cpp"   # tasks created before --lang are C++
+
+
+def impl_dir_used(st, fz) -> pathlib.Path:
+    """The implementation directory the campaign used: run_fuzz.sh records it (for C++ only when given)."""
+    d = fz.get("impl_dir")
+    return pathlib.Path(d if d and d != "default" else st["cpp"]["impl_dir"])
+
+
 def cmd_couple(a):
     t = Task(a.task); st = t.load(); guard(st, "couple")
     n = sum(1 for h in st["history"] if h.get("from") == "COUPLE") + 1
     run = t.dir / f"couple-{n}"
     cmd = [str(HARNESS / "fuzz/run_fuzz.sh"), "--lean-project", st["project"], "--lock", st["lock"],
-           "--cmake-dir", st["cpp"]["cmake_dir"], "--target", st["cpp"]["target"], "--out", str(run)]
+           "--cmake-dir", st["cpp"]["cmake_dir"], "--target", st["cpp"]["target"], "--out", str(run),
+           "--lang", fuzz_lang(st)]
+    if st["cpp"].get("impl_dir_given"):
+        cmd += ["--impl-dir", st["cpp"]["impl_dir"]]
     cmd += ["--time", str(st["cpp"]["time"])] if st["cpp"].get("time") else ["--runs", str(st["cpp"]["runs"] or 1000000)]
     rc = run_logged(cmd, t.dir / f"couple-{n}.log")
     fz = json.loads((run / "fuzz.json").read_text()) if (run / "fuzz.json").is_file() else {}
     st["last_couple"] = str(run)
+    if fz and fz.get("lang", "cpp") != fuzz_lang(st):  # the campaign must be the task's language
+        t.move(st, "ERROR", f"fuzz ran --lang {fz.get('lang')!r}, the task is {fuzz_lang(st)!r}")
+        return 3
     if rc == 0 and (fz.get("draft") or fz.get("verdict") != "PASS"):  # never countable
         t.move(st, "ERROR", f"fuzz result is not countable: verdict {fz.get('verdict')!r}, draft {fz.get('draft')!r}")
         return 3
@@ -340,7 +360,8 @@ def cmd_couple(a):
     if rc == 1:
         bug = {"task": f"{st['task']}-cpp-bugfix-{n}", "opened": now(), "mismatch": fz.get("mismatch"),
                "detail": fz.get("detail"), "reproducers": sorted(p.name for p in (run / "artifacts").glob("*")),
-               "rule": "fix the C++ implementation; spec/challenge is not modified without human override"}
+               "lang": fuzz_lang(st),
+               "rule": "fix the implementation; spec/challenge is not modified without human override"}
         (t.dir / f"cpp-bugfix-{n}.json").write_text(json.dumps(bug, indent=2))
         t.move(st, "CPP_BUGFIX", f"fuzz FAIL: {fz.get('detail')}; bugfix task {bug['task']} opened",
                bugfix=str(t.dir / f"cpp-bugfix-{n}.json"))
@@ -358,6 +379,9 @@ def cmd_close(a):
     audit = pathlib.Path(st["last_audit"]); couple = pathlib.Path(st["last_couple"])
     verdict = json.loads((audit / "verdict.json").read_text())
     fz = json.loads((couple / "fuzz.json").read_text())
+    if fz.get("lang", "cpp") != fuzz_lang(st):
+        t.move(st, "ERROR", f"CLOSE refused: the fuzz record is --lang {fz.get('lang')!r}, the task is {fuzz_lang(st)!r}")
+        return 3
     if fz.get("draft") or fz.get("verdict") != "PASS" or verdict.get("verdict") != "PASS":
         t.move(st, "ERROR", f"CLOSE refused: not countable (fuzz verdict {fz.get('verdict')!r}, draft "
                             f"{fz.get('draft')!r}, gate verdict {verdict.get('verdict')!r})")
@@ -375,8 +399,11 @@ def cmd_close(a):
         "source_digests": {
             "lock_manifest": st.get("lock_digest"),
             "solution": {str(f.relative_to(proj)): sha256(f) for f in solution_files(proj)},
-            "cpp_impl": {str(f): sha256(f) for f in sorted(pathlib.Path(st["cpp"]["impl_dir"]).rglob("*"))
-                         if f.is_file()},
+            "impl": {"lang": fuzz_lang(st), "dir": str(impl_dir_used(st, fz)),
+                     "files": {str(f): sha256(f) for f in sorted(impl_dir_used(st, fz).rglob("*"))
+                               if f.is_file() and "__pycache__" not in f.parts}},
+            "binding_dir": {str(f): sha256(f) for f in sorted(pathlib.Path(st["cpp"]["cmake_dir"]).rglob("*"))
+                            if f.is_file() and not {"corpus", "target", "build", "__pycache__"} & set(f.relative_to(st["cpp"]["cmake_dir"]).parts)},
         },
         "exports_sha256": verdict.get("exports_sha256"),
         "gate": {"verdict": verdict.get("verdict"), "stages": verdict.get("stages"), "run": str(audit)},
@@ -385,8 +412,8 @@ def cmd_close(a):
         "kernels": {"con_leche": grab("con_leche", r"^con-leche: (accepted|declined|rejected)"),
                     "con_ron": grab("con_ron", r"^con-ron: (accepted|declined|rejected)"),
                     "con_leche_compare": grab("con_leche_compare", r"^con-leche: (accepted|theorem)")},
-        "fuzz": {k: fz.get(k) for k in ("verdict", "runs", "max_total_time", "campaign_seconds", "stats", "corpus",
-                                        "vendored")},
+        "fuzz": {k: fz.get(k) for k in ("lang", "verdict", "runs", "max_total_time", "campaign_seconds", "stats", "corpus",
+                                        "impl_dir", "vendored", "limits", "evm")},
         # Edge-case classes: labels for the reviewer, never part of the verdict.
         "edge_cases": fz.get("classes"),
         "provenance": verdict.get("provenance"),
@@ -401,7 +428,7 @@ def cmd_close(a):
           f"# Closure report: {st['task']}", "", f"Closed {bundle['closed']}. Gate **{verdict.get('verdict')}**, "
           f"fuzz **{fz.get('verdict')}**.", "", "## Digests", f"- lock manifest: `{st.get('lock_digest')}`"]
     md += [f"- {k}: `{v}`" for k, v in bundle["source_digests"]["solution"].items()]
-    md += [f"- {k}: `{v}`" for k, v in bundle["source_digests"]["cpp_impl"].items()]
+    md += [f"- {k}: `{v}`" for k, v in bundle["source_digests"]["impl"]["files"].items()]
     md += [f"- export {k}: `{v}`" for k, v in (verdict.get("exports_sha256") or {}).items()]
     md += ["", "## Gate stages"] + [f"- {k}: {v}" for k, v in sorted((verdict.get("stages") or {}).items())]
     md += ["", "## Kernel verdicts"] + [f"- {l}" for v in bundle["kernels"].values() for l in v]
@@ -411,7 +438,12 @@ def cmd_close(a):
            "- " + ", ".join(f"{k} {ts.get(k, 0)}" for k in STAT_KEYS)]
     md += [f"- {n}: {s['status']}" + (f" ({s['closed_by']})" if s.get("closed_by") else "")
            + (f"; walled: {s['wall_reason']}" if s.get("wall_reason") else "") for n, s in st["stubs"].items()]
-    md += ["", "## Differential fuzz", f"- {fz.get('stats', '').strip()}", f"- {fz.get('campaign_seconds')} s"]
+    md += ["", "## Differential fuzz", f"- language: `{fz.get('lang', 'cpp')}`, implementation `{bundle['source_digests']['impl']['dir']}`",
+           f"- {fz.get('stats', '').strip()}", f"- {fz.get('campaign_seconds')} s"]
+    ex = fz.get("evm")
+    if ex:
+        md += [f"- {fz.get('lang')} pins: " + ", ".join(f"{k} `{ex[k]}`" for k in sorted(ex) if isinstance(ex[k], (str, int))
+                                                      and k not in ("contract_coverage",))[:2000]]
     md += [f"- vendored {k}: harness {v.get('cited_commit')}, body sha256 {v.get('body_sha256')}, match={v.get('match')}"
            for k, v in (fz.get("vendored") or {}).items()]
     ec = fz.get("classes") or {}
@@ -462,7 +494,9 @@ def main():
     p = sub.add_parser("init"); p.add_argument("task")
     p.add_argument("--project", required=True); p.add_argument("--lock", required=True)
     p.add_argument("--cmake-dir", required=True); p.add_argument("--target", required=True)
-    p.add_argument("--impl-dir", help="production C++ sources (default: CMAKE_DIR/../impl)")
+    p.add_argument("--impl-dir", help="production sources (default: run_fuzz.sh's for the language; C++: CMAKE_DIR/../impl)")
+    p.add_argument("--lang", choices=("cpp", "rust", "python", "evm"), default="cpp",
+                   help="the implementation's language, passed to fuzz/run_fuzz.sh --lang")
     p.add_argument("--budget", type=int); p.add_argument("--max-attempts", type=int)
     p.add_argument("--same-failure-wall", choices=("on", "off"))
     p.add_argument("--fuzz-runs", type=int); p.add_argument("--fuzz-time", type=int)

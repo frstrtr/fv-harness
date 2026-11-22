@@ -361,6 +361,17 @@ $FT init walk --project "$W" --lock locks/conservation.sha256 \
 $FT spec-lock walk                    # SPEC_LOCK -> DECOMPOSE; records the signer
 ```
 
+The implementation's language defaults to C++. For the others, name it at `init`; COUPLE then runs
+`fuzz/run_fuzz.sh --lang` with it (and `--impl-dir`, when given), and CLOSE refuses a fuzz record of
+another language:
+
+```sh
+$FT init rl-py --project "$W" --lock locks/risk-limit.sha256 --cmake-dir examples/risk-limit-py/fuzz \
+  --target diff_risk --lang python --fuzz-runs 1000000        # also: --lang rust | evm
+```
+
+`tests/lang_rehearsal.sh` runs every language through the whole state machine on the examples.
+
 The Tier-1 planner, an agent with the lean-lsp MCP server (`agent-config/`), writes a skeleton into
 `spec/solution/`. The skeleton is the main theorems proved from small lemmas, each still `sorry`.
 The dry run's skeleton is `tests/dry_run/skeleton/Solution.lean`:
