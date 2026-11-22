@@ -3,7 +3,15 @@
 #
 #   fuzz/run_fuzz.sh --lean-project DIR --lock LOCKFILE --cmake-dir DIR --target NAME [--lang cpp|rust|python|evm]
 #                    [--impl-dir DIR] [--runs N | --time SECONDS] [--corpus DIR]
-#                    [--no-merge] [--out RUNDIR]
+#                    [--no-merge] [--out RUNDIR] [--draft]
+#
+# --draft: validate a DRAFT specification before its owner signs it. --lock is then an UNSIGNED
+#    manifest (scripts/spec_lock.sh lock output) and step 1 is a content check only
+#    (spec_lock.sh check-content); the oracle is still built only from the files it lists. Nothing a
+#    draft run produces is countable: "DRAFT (unsigned, not countable)" is the first line of fuzz.log
+#    and the first key of fuzz.json, the verdict reads "DRAFT PASS" / "DRAFT FAIL" / ... (never
+#    "PASS"), the persisted corpus is never merged into (implies --no-merge), and the gate's COUPLE
+#    and CLOSE (scripts/formal_task.py, which never passes --draft) refuse a draft fuzz.json.
 #
 # 1. The spec project must match its lock (else BLOCKED). The oracle is built from a copy that
 #    holds only the locked files, so it comes from spec/challenge and never from spec/solution.
@@ -56,7 +64,7 @@ unset FV_CLASSIFY FV_CLASSIFY_RENDER FV_CLASSIFY_TIME_IMPL
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/../scripts/lib.sh"
 
-proj=""; lock=""; cmake_dir=""; target=""; impl=""; runs=""; secs=""; corpus=""; merge=1; out=""; lang=cpp
+proj=""; lock=""; cmake_dir=""; target=""; impl=""; runs=""; secs=""; corpus=""; merge=1; out=""; lang=cpp; draft=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --lean-project) proj="$2"; shift 2 ;;
@@ -69,6 +77,7 @@ while [ $# -gt 0 ]; do
     --time) secs="$2"; shift 2 ;;
     --corpus) corpus="$2"; shift 2 ;;
     --no-merge) merge=0; shift ;;
+    --draft) draft=1; shift ;;
     --out) out="$2"; shift 2 ;;
     *) die "unknown argument $1" ;;
   esac
@@ -93,8 +102,14 @@ LIMITS=(-timeout="$T_OUT" -rss_limit_mb="$RSS_MB" -malloc_limit_mb="$MAL_MB" -re
 RUN="${out:-$FV_ROOT/runs/fuzz-$target-$(date +%Y%m%dT%H%M%S)-$$}"
 mkdir -p "$RUN"; RUN="$(cd "$RUN" && pwd)"
 LOG="$RUN/fuzz.log"; : > "$LOG"
+DRAFT_STAMP="DRAFT (unsigned, not countable)"
+if [ "$draft" -eq 1 ]; then
+  merge=0
+  echo "$DRAFT_STAMP: run_fuzz.sh --draft, lock $lock is an unsigned manifest" | tee -a "$LOG" >&2
+fi
 verdict() { # verdict EXIT VERDICT DETAIL
-  jq -n --arg v "$2" --argjson e "$1" --arg d "$3" --arg t "$target" --arg runs "${runs:-}" \
+  local v="$2"; [ "$draft" -eq 1 ] && v="DRAFT $2"
+  jq -n --arg v "$v" --arg draft "$([ "$draft" -eq 1 ] && echo "$DRAFT_STAMP")" --argjson e "$1" --arg d "$3" --arg t "$target" --arg runs "${runs:-}" \
     --arg secs "${secs:-}" --arg corpus "$corpus" --arg impl "${impl:-default}" \
     --arg lock "$(sha256sum "$lock" | cut -d' ' -f1)" --arg el "${elapsed:-}" \
     --arg mm "$(grep -m1 'diff-oracle: MISMATCH' "$RUN/campaign.log" 2>/dev/null)" \
@@ -103,18 +118,21 @@ verdict() { # verdict EXIT VERDICT DETAIL
     --argjson vend "${VENDORED_JSON:-{\}}" --argjson cls "${CLASSES_JSON:-null}" --argjson evm "${EVM_JSON:-null}" \
     --argjson lim "{\"timeout_s\":$T_OUT,\"rss_limit_mb\":$RSS_MB,\"malloc_limit_mb\":$MAL_MB,\"report_slow_units_s\":$SLOW_S}" \
     --arg slow "$(ls "$RUN"/artifacts/ 2>/dev/null | grep '^slow-unit-' | tr '\n' ' ')" \
-    '{verdict:$v, exit:$e, detail:$d, target:$t, runs:$runs, max_total_time:$secs, impl_dir:$impl,
+    '(if $draft != "" then {draft:$draft} else {} end) + {verdict:$v, exit:$e, detail:$d, target:$t, runs:$runs, max_total_time:$secs, impl_dir:$impl,
       corpus:$corpus, lock_digest:$lock, campaign_seconds:$el, mismatch:$mm, artifact:$art, stats:$stats,
       vendored:$vend, classes:$cls, evm:$evm, limits:$lim, slow_units:($slow | split(" ") | map(select(. != "")))}' \
     > "$RUN/fuzz.json"
-  note "fuzz verdict $2 (exit $1): $3"
+  note "fuzz verdict $v (exit $1): $3"
   exit "$1"
 }
 
 [ -z "$BAD_LIMIT" ] || verdict 3 ERROR "fv.toml: limits must be positive whole numbers (0 disables a limit): ${BAD_LIMIT% }"
 
 # 1. Lock and trusted oracle copy.
-if ! "$HERE/../scripts/spec_lock.sh" check "$proj" "$lock" >> "$LOG" 2>&1; then
+if [ "$draft" -eq 1 ]; then
+  "$HERE/../scripts/spec_lock.sh" check-content "$proj" "$lock" >> "$LOG" 2>&1 \
+    || verdict 2 BLOCKED "draft spec project differs from its unsigned manifest; oracle not built"
+elif ! "$HERE/../scripts/spec_lock.sh" check "$proj" "$lock" >> "$LOG" 2>&1; then
   verdict 2 BLOCKED "spec project differs from its lock; oracle not built"
 fi
 # 1b. Vendored harness files in the fuzz directory.

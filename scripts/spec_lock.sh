@@ -7,6 +7,10 @@
 #                                         key that never leaves it)
 #   spec_lock.sh check PROJECT LOCKFILE [--expect-fingerprint SHA256:...]
 #                                         exit 0 if signed, pinned and unchanged; 2 (BLOCKED) otherwise
+#   spec_lock.sh check-content PROJECT MANIFEST
+#                                         DRAFTS ONLY (fuzz/run_fuzz.sh --draft): exit 0 if the trusted
+#                                         files equal an UNSIGNED manifest, 2 otherwise. No signature is
+#                                         read or verified; nothing it passes is countable.
 #
 # Trusted = every file in PROJECT except .lake/, .git/ and spec/solution/. That covers
 # spec/challenge/, the lakefile, lean-toolchain, lake-manifest.json and comparator.json. The
@@ -79,6 +83,20 @@ case "$cmd" in
     rm -f "$lock.sig"
     ssh-keygen -q -Y sign -f "$key" -n "$NS" "$lock"
     echo "signed $lock -> $lock.sig ($(ssh-keygen -lf "$key" | awk '{print $2}'))"
+    ;;
+  check-content)
+    proj="${2:-}"; lock="${3:-}"
+    [ -d "$proj" ] && [ -f "$lock" ] || { echo "usage: $0 check-content PROJECT MANIFEST" >&2; exit 3; }
+    echo "DRAFT (unsigned, not countable): content check only, no signature verified"
+    now=$(mktemp); trap 'rm -f "$now"' EXIT
+    if ! manifest "$proj" > "$now"; then echo "BLOCKED: trusted tree is malformed"; exit 2; fi
+    if diff -u "$lock" "$now" > /dev/null; then
+      echo "OK (DRAFT): $(wc -l < "$lock") trusted files match the unsigned manifest $(sha256sum "$lock" | cut -d' ' -f1)"
+    else
+      echo "BLOCKED: trusted files differ from the unsigned manifest"
+      diff -u --label manifest --label now "$lock" "$now" | grep -E '^[-+][^-+]' || true
+      exit 2
+    fi
     ;;
   check)
     proj="${2:-}"; lock="${3:-}"; expect=""

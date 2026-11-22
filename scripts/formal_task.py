@@ -177,12 +177,32 @@ def cmd_set(a):
     return 0
 
 
+def spec_lock_cause(out: str, rc: int) -> str:
+    """The actual reason spec_lock.sh check BLOCKED, from its output: signature or content."""
+    why = next((l[len("BLOCKED: "):] for l in reversed(out.splitlines()) if l.startswith("BLOCKED: ")), "")
+    if why.startswith("unsigned lock"):
+        cause = "unsigned: no signature"
+    elif why.startswith(("signature is not by any key", "no allowed-signers file")):
+        cause = "signature by a key not in allowed_signers"
+    elif why.startswith("bad signature"):
+        cause = "invalid signature"
+    elif why.startswith("no pinned fingerprint"):
+        cause = "signer not pinned"
+    elif why.startswith("the lock is not signed by the pinned key"):
+        cause = "signed by a key other than the pinned one"
+    elif why.startswith(("trusted files differ", "trusted tree is malformed")):
+        cause = "content mismatch: the trusted files differ from the signed lock"
+    else:
+        cause = f"spec_lock.sh exit {rc}"
+    return f"BLOCKED ({cause})" + (f": {why}" if why else "")
+
+
 def cmd_spec_lock(a):
     t = Task(a.task); st = t.load(); guard(st, "spec-lock")
     log = t.dir / "spec_lock.log"
     rc = run_logged([str(HARNESS / "scripts/spec_lock.sh"), "check", st["project"], st["lock"]], log)
     if rc != 0:
-        t.move(st, "BLOCKED", "trusted files differ from the human-set lock", log=str(log))
+        t.move(st, "BLOCKED", "spec lock " + spec_lock_cause(log.read_text() if log.is_file() else "", rc), log=str(log))
         return NEEDS_HUMAN
     st["lock_digest"] = sha256(pathlib.Path(st["lock"]))
     signer_line = next((l for l in log.read_text().splitlines() if l.startswith("SIGNER ")), "SIGNER -")
@@ -310,6 +330,9 @@ def cmd_couple(a):
     rc = run_logged(cmd, t.dir / f"couple-{n}.log")
     fz = json.loads((run / "fuzz.json").read_text()) if (run / "fuzz.json").is_file() else {}
     st["last_couple"] = str(run)
+    if rc == 0 and (fz.get("draft") or fz.get("verdict") != "PASS"):  # never countable
+        t.move(st, "ERROR", f"fuzz result is not countable: verdict {fz.get('verdict')!r}, draft {fz.get('draft')!r}")
+        return 3
     if rc == 0:
         t.move(st, "CLOSE", f"fuzz PASS: {fz.get('stats', '').strip()} in {fz.get('campaign_seconds')}s",
                fuzz=str(run / "fuzz.json"))
@@ -335,6 +358,10 @@ def cmd_close(a):
     audit = pathlib.Path(st["last_audit"]); couple = pathlib.Path(st["last_couple"])
     verdict = json.loads((audit / "verdict.json").read_text())
     fz = json.loads((couple / "fuzz.json").read_text())
+    if fz.get("draft") or fz.get("verdict") != "PASS" or verdict.get("verdict") != "PASS":
+        t.move(st, "ERROR", f"CLOSE refused: not countable (fuzz verdict {fz.get('verdict')!r}, draft "
+                            f"{fz.get('draft')!r}, gate verdict {verdict.get('verdict')!r})")
+        return 3
 
     def grab(stage, pat):
         p = audit / "stages" / f"{stage}.log"

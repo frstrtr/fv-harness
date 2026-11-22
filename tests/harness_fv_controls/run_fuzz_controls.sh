@@ -24,11 +24,18 @@
 #                 contain the classify build (nm: no fv_classify_build_marker), the classify binary must.
 #   c14_zero_limits   fv.toml timeout / rss_limit_mb / malloc_limit_mb = 0 (libFuzzer: "no limit"):
 #                 each must be refused with ERROR (exit 3) before anything is built.
+#   c30_draft_not_countable  a draft (an UNSIGNED spec_lock.sh manifest) can be validated with
+#                 run_fuzz.sh --draft but never counts: (a) the --draft run is stamped "DRAFT (unsigned, not
+#                 countable)" first in fuzz.log and fuzz.json, its verdict reads "DRAFT PASS", and the
+#                 persisted corpus is not merged into; (b) the same manifest without --draft is BLOCKED;
+#                 (c) a task with that manifest stops at SPEC_LOCK (BLOCKED); (d) CLOSE given a draft
+#                 fuzz.json refuses (ERROR, no closure.json).
 #
 # Prints one "ID RESULT DETAIL" line per control; exit 0 iff all behave as specified. Controls
 # never write to the persisted corpus (--no-merge; the corpus is copied into OUTDIR first).
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$ROOT/scripts/lib.sh"
 OUT="$1"; mkdir -p "$OUT"
 FIX="$ROOT/fixtures/conservation"; LOCK="$ROOT/locks/conservation.sha256"
 CPP="$ROOT/fixtures/conservation_cpp/fuzz"
@@ -179,5 +186,36 @@ if [ -z "$bad" ]; then
   echo "c14_zero_limits OK timeout=0, rss_limit_mb=0, malloc_limit_mb=0 each refused: ERROR exit 3 before build ($(jq -r .detail "$OUT/c14_zero_limits/timeout/run/fuzz.json"))"
 else
   echo "c14_zero_limits WRONG not refused: $bad"; fails=1
+fi
+
+D30="$OUT/c30"; rm -rf "$D30"; mkdir -p "$D30"
+cp -r "$FIX" "$D30/proj"; rm -rf "$D30/proj/.lake" "$D30/proj/spec/solution"
+"$ROOT/scripts/spec_lock.sh" lock "$D30/proj" "$D30/draft.sha256" > "$D30/lock.out" 2>&1
+cp -r "$CPP/corpus" "$D30/corpus"; n0=$(ls "$D30/corpus" | wc -l)
+"$ROOT/fuzz/run_fuzz.sh" --draft --lean-project "$D30/proj" --lock "$D30/draft.sha256" --cmake-dir "$CPP" \
+  --target diff_transfer --runs 20000 --corpus "$D30/corpus" --out "$D30/draft" > "$D30/draft.out" 2>&1; ra=$?
+ja="$D30/draft/fuzz.json"; n1=$(ls "$D30/corpus" | wc -l)
+"$ROOT/fuzz/run_fuzz.sh" --lean-project "$D30/proj" --lock "$D30/draft.sha256" --cmake-dir "$CPP" \
+  --target diff_transfer --runs 20000 --corpus "$D30/corpus" --no-merge --out "$D30/signed-path" > "$D30/signed-path.out" 2>&1; rb=$?
+jb="$D30/signed-path/fuzz.json"
+FT=(python3 -I "$ROOT/scripts/formal_task.py"); T30="c30-draft-$$"; T30d="c30-close-$$"
+"${FT[@]}" init "$T30" --project "$D30/proj" --lock "$D30/draft.sha256" --cmake-dir "$CPP" --target diff_transfer \
+  --fuzz-runs 1000 > "$D30/task.out" 2>&1
+"${FT[@]}" spec-lock "$T30" >> "$D30/task.out" 2>&1; rc_c=$?
+st_c=$(jq -r .state "$FV_ROOT/tasks/$T30/state.json" 2>/dev/null)
+mkdir -p "$D30/audit"; echo '{"verdict": "PASS", "stages": {}}' > "$D30/audit/verdict.json"
+mkdir -p "$FV_ROOT/tasks/$T30d"
+jq --arg a "$D30/audit" --arg c "$D30/draft" --arg t "$T30d" '.task = $t | .state = "CLOSE" | .last_audit = $a | .last_couple = $c' \
+  "$FV_ROOT/tasks/$T30/state.json" > "$FV_ROOT/tasks/$T30d/state.json"
+"${FT[@]}" close "$T30d" >> "$D30/task.out" 2>&1; rc_d=$?
+st_d=$(jq -r .state "$FV_ROOT/tasks/$T30d/state.json" 2>/dev/null); cl_d=$([ -e "$FV_ROOT/tasks/$T30d/closure.json" ] && echo yes || echo no)
+cp -r "$FV_ROOT/tasks/$T30" "$FV_ROOT/tasks/$T30d" "$D30/" 2>/dev/null; rm -rf "$FV_ROOT/tasks/$T30" "$FV_ROOT/tasks/$T30d"
+if [ ! -e "$D30/draft.sha256.sig" ] && [ $ra -eq 0 ] && [ "$(jq -r 'keys_unsorted[0]' "$ja")" = draft ] \
+   && [ "$(jq -r .verdict "$ja")" = "DRAFT PASS" ] && head -1 "$D30/draft/fuzz.log" | grep -q '^DRAFT (unsigned, not countable)' \
+   && [ "$n0" = "$n1" ] && [ $rb -eq 2 ] && [ "$(jq -r .verdict "$jb")" = BLOCKED ] \
+   && [ $rc_c -ne 0 ] && [ "$st_c" = BLOCKED ] && [ $rc_d -eq 3 ] && [ "$st_d" = ERROR ] && [ "$cl_d" = no ]; then
+  echo "c30_draft_not_countable OK --draft: \"$(jq -r .verdict "$ja")\" (first key draft, fuzz.log line 1 DRAFT, corpus $n0 -> $n1 files); same manifest without --draft: BLOCKED; task: SPEC_LOCK -> BLOCKED; CLOSE on a draft fuzz.json: ERROR, no closure"
+else
+  echo "c30_draft_not_countable WRONG draft exit=$ra verdict=$(jq -r .verdict "$ja" 2>/dev/null) first_key=$(jq -r 'keys_unsorted[0]' "$ja" 2>/dev/null) corpus $n0->$n1; signed-path exit=$rb; task rc=$rc_c state=$st_c; close rc=$rc_d state=$st_d closure=$cl_d"; fails=1
 fi
 exit $fails

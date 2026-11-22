@@ -300,8 +300,25 @@ fuzz/run_fuzz.sh --lean-project "$W" --lock locks/conservation.sha256 \
   --cmake-dir fixtures/conservation_cpp/fuzz --target diff_transfer --time 60 --no-merge
 ```
 
-(The lock must exist for `run_fuzz.sh`; for a brand-new project, create it with step 3 first, or
-build the fuzz directory by hand with `cmake -S <fuzz dir>`.)
+For a project whose lock is not signed yet, validate the draft with **`--draft`**. Use an
+unsigned manifest kept in a scratch directory, never in `locks/`, and never sign it with the
+fixture key:
+
+```sh
+scripts/spec_lock.sh lock "$W" "$FV_ROOT/work/draft.sha256"       # unsigned manifest (scratch)
+fuzz/run_fuzz.sh --draft --lean-project "$W" --lock "$FV_ROOT/work/draft.sha256" \
+  --cmake-dir fixtures/conservation_cpp/fuzz --target diff_transfer --runs 1000000
+# fuzz.log line 1 and fuzz.json's first key: "DRAFT (unsigned, not countable)"; verdict "DRAFT PASS"
+```
+
+`--draft` checks the content only: the trusted files must equal the manifest, else BLOCKED. The
+oracle is still built only from the files the manifest lists. A draft run never counts:
+- its verdict is never "PASS";
+- it never merges into the persisted corpus;
+- `formal_task.py` COUPLE and CLOSE refuse a draft `fuzz.json`;
+- a task whose lock is unsigned stops at SPEC_LOCK.
+
+Control c30 checks all of this. After the owner signs (step 3), run COUPLE again through the gate.
 
 ## 3. Lock and sign (`SPEC_LOCK`)
 
