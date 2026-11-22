@@ -372,6 +372,9 @@ $FT init rl-py --project "$W" --lock locks/risk-limit.sha256 --cmake-dir example
 
 `tests/lang_rehearsal.sh` runs every language through the whole state machine on the examples.
 
+The closure names the implementation in `closure.json` → `source_digests.impl` (`lang`, the directory
+the campaign used, and its files' sha256). Closures from v0.2.0 call that map `source_digests.cpp_impl`.
+
 The Tier-1 planner, an agent with the lean-lsp MCP server (`agent-config/`), writes a skeleton into
 `spec/solution/`. The skeleton is the main theorems proved from small lemmas, each still `sorry`.
 The dry run's skeleton is `tests/dry_run/skeleton/Solution.lean`:

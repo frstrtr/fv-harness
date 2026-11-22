@@ -12,6 +12,21 @@ The pipeline:
   statement comparator.
 - A **differential fuzzer** ties the shipped C/C++ to the proved model bit for bit.
 
+## Changes in v0.2.1
+
+- **COUPLE runs the task's language.** `formal_task.py init --lang cpp|rust|python|evm` (default
+  `cpp`) is passed to `fuzz/run_fuzz.sh --lang`, with `--impl-dir` only when it was given. In v0.2.0,
+  COUPLE always ran the C++ path, so a Rust, Python or EVM task could not be closed through the state
+  machine.
+- `fuzz.json` records `lang`; COUPLE and CLOSE refuse a fuzz record of another language.
+- **Closure format change.** `closure.json` → `source_digests.cpp_impl` (v0.2.0: a map of file →
+  sha256) is replaced by `source_digests.impl`: `{lang, dir, files}`, where `dir` is the
+  implementation directory the campaign actually used and `files` the same file → sha256 map
+  (generated `__pycache__` left out). The closure's `fuzz` section also records `lang`, `impl_dir`,
+  `limits` and, for EVM, `evm`. Readers of v0.2.0 closures: `cpp_impl` there means what
+  `impl.files` means here.
+- `tests/lang_rehearsal.sh` runs every language through the whole state machine on the examples.
+
 ## Start here
 
 - **Adopting it for your own C/C++ code?** Read `docs/USAGE.md`, "Adopt it in your project". It
