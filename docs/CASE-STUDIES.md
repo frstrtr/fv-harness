@@ -176,11 +176,3 @@ The open quantity became `2^64 − 1`. The correct C++ survived 10^6 runs.
 inputs no one writes a test for. A proof about exact arithmetic does not see it. A width statement
 says which C++ computation is safe, and boundary-favouring differential fuzzing checks that the
 code actually computes it that way.
-
-## Pending slots
-
-These are filled only after the fixes land and their owners have checked the wording.
-
-8. TODO: a load-bearing hypothesis.
-9. TODO: a resume path that recomputed from scratch.
-10. TODO: a header-chain robustness issue at start-up.
