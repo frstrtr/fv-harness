@@ -136,7 +136,8 @@ Then rename and fill in:
 | `lean/comparator.json` | `theorem_names` = every statement, fully qualified; `permitted_axioms` stays exactly the three |
 | `lean/spec/challenge/<Spec>/Oracle.lean` | `@[export your_c_name]` wrappers taking and returning `UInt64` (or a byte codec for structured data), reducing outputs mod 2^64 the way the C++ does |
 | `lean/spec/solution/Solution.lean` | the proofs (or a `sorry` skeleton for the provers to fill) |
-| `cpp/fuzz/binding.hpp` | `State`, `Op`, `initial_state` (generate **admissible** states only: the ones your hypotheses assume), `make_op`, `oracle_step` (call your exported functions), `impl_step` (call **your production function**), `same`, `print_*`, `warm_up` |
+| `cpp/fuzz/binding.hpp` | `State`, `Op`, `initial_state` (generate **admissible** states only: the ones your hypotheses assume), `make_op`, `oracle_step` (call your exported functions), `impl_step` (call **your production function**), `same`, `print_*`, `warm_up`; optionally `describe()` (the fields, sizes, divisions and outcome label the edge-case classifier should watch) |
+| `cpp/fuzz/classes.hpp` | optional: your domain edge cases, one `FV_CLASS("name", predicate)` each over `before`, `op` and the oracle's `after` (e.g. "order exactly fills the headroom"). Use `fvfuzz::u128` for sums that could pass 2^64 |
 | `cpp/fuzz/CMakeLists.txt` | `lean_oracle_library(... PACKAGE <lake package> LEAN_LIB <Spec> INIT_MODULES <Spec>.Oracle)`; `add_diff_fuzzer(<target> ...)` as below |
 
 Point the fuzzer at your production code:
@@ -186,6 +187,10 @@ Any later change to a locked file is BLOCKED until the owner signs a new manifes
 "Signed SPEC_LOCK and the residual risk" in the README.
 
 ### A5. Gate your proofs and fuzz your C++
+
+After a campaign, read `<run>/classify/review_deck.md`. Its **NOT EXERCISED** list shows the edge cases
+your generator never produced. A PASS says nothing about those, so widen `initial_state`/`make_op`
+or add seeds until the list is empty or each remaining entry is explained.
 
 ```sh
 scripts/verify_proof.sh --project "$P/lean" --lock locks/$N.sha256 --out runs/gate

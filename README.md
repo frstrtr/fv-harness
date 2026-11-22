@@ -161,7 +161,20 @@ What `run_fuzz.sh` does:
   `fuzz/VENDORED.sha256`); otherwise COUPLE FAILs before anything is built. Both hashes go into
   `fuzz.json` and the closure bundle. Control `c8_vendored_tamper` covers it. The project's own
   `binding.hpp` and `CMakeLists.txt` remain agent-side: review them like any other test code.
+- Applies per-project limits from `fv.toml` (`timeout`, `rss_limit_mb`, `malloc_limit_mb`, `report_slow_units`). Leaks, hangs and unbounded growth FAIL with their own detail (`LEAK`, `HANG`, `OOM`); see `docs/DESIGN-NOTES.md` §6.
 - Replays the persisted corpus first (regression).
+- After the verdict is settled, classifies the corpus for the reviewer (labels only, never part of
+  the verdict). This is a separate replay through the oracle alone; the C++ is not called. It
+  reports which edge cases were exercised:
+  - boundary values of the fields the binding declares;
+  - empty, single and tied collections;
+  - exact vs remainder-boundary divisions;
+  - outcome labels;
+  - the project's own domain classes from `classes.hpp`.
+
+  Classes with 0 hits are listed as **NOT EXERCISED**. A review deck of the smallest example per
+  class goes to `classify/review_deck.md`. Control `c9_edge_not_exercised` proves a gap is
+  reported. See `docs/DESIGN-NOTES.md` §5.
 - Runs `-runs=N` (default 10^6) or `-max_total_time=S` (CI: 60).
 - On PASS, merges new coverage into `fuzz/corpus/`.
 - On FAIL, adds the reproducer to the corpus, so replay keeps failing until the C++ is fixed.

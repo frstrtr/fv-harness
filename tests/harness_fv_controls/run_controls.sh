@@ -159,7 +159,9 @@ fi
 while read -r id res detail; do
   [ -n "$id" ] && report "$id" "$res" "$detail"
 done < "$OUT/fuzz.out"
-grep -qE "^c1_fuzz " "$OUT/fuzz.out" && grep -qE "^c6_cpp_drift " "$OUT/fuzz.out" && grep -qE "^c7_lsan_leak " "$OUT/fuzz.out" && grep -qE "^c8_vendored_tamper " "$OUT/fuzz.out" ||
+grep -qE "^c1_fuzz " "$OUT/fuzz.out" && grep -qE "^c6_cpp_drift " "$OUT/fuzz.out" && grep -qE "^c7_lsan_leak " "$OUT/fuzz.out" && grep -qE "^c8_vendored_tamper " "$OUT/fuzz.out" && grep -qE "^c9_edge_not_exercised " "$OUT/fuzz.out" \
+   && grep -qE "^c10_leak_class " "$OUT/fuzz.out" && grep -qE "^c11_hang " "$OUT/fuzz.out" && grep -qE "^c12_growth " "$OUT/fuzz.out" \
+   && grep -qE "^c13_classify_env " "$OUT/fuzz.out" && grep -qE "^c14_zero_limits " "$OUT/fuzz.out" ||
   report fuzz_controls WRONG "runner produced no verdict lines (see $OUT/fuzz.out)"
 
 note "$fails control(s) misbehaved; summary $SUM"

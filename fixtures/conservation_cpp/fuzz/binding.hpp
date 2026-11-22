@@ -48,6 +48,22 @@ inline void print_op(FILE* f, const Op& op) {
   std::fprintf(f, "  op     transfer amt=%" PRIu64 " bps=%" PRIu64 "\n", op.amt, op.bps);
 }
 
+// Edge-case classification (labels only; fuzz/fv_classify.hpp). Declares what matters about one
+// step, from the input and the ORACLE's state after it; the C++ result is never consulted.
+#define FV_BINDING_DESCRIBE 1
+inline void describe(fvfuzz::Sink& k, const State& before, const Op& op, const State& after) {
+  k.field("state.a", before.a);
+  k.field("state.b", before.b);
+  k.field("state.fee", before.fee);
+  k.field("op.amt", op.amt);
+  k.field("op.bps", op.bps);
+  const uint64_t x = op.amt < before.a ? op.amt : before.a;          // amount moved
+  const uint64_t rate = op.bps < 10000 ? op.bps : 10000;
+  k.division("fee = x*rate/10000", static_cast<fvfuzz::u128>(x) * rate, 10000);
+  k.outcome(x == 0 ? "nothing moved" : (op.amt >= before.a ? "whole balance moved" : "partial transfer"));
+  (void)after;
+}
+
 // Runs under LSan's ScopedDisabler in LLVMFuzzerInitialize: one oracle call with values above
 // 2^63, so the Lean runtime's big-number paths are initialised before fuzzing starts.
 inline void warm_up() {

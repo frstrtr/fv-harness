@@ -55,6 +55,20 @@ inline void print_op(FILE* f, const Op& o) {
   std::fprintf(f, "  op     %s q=%" PRIu64 "\n", kName[o.op % 4], o.q);
 }
 
+// Edge-case classification (labels only; fuzz/fv_classify.hpp), from the input and the ORACLE's
+// state after the step; the C++ result is never consulted.
+#define FV_BINDING_DESCRIBE 1
+inline void describe(fvfuzz::Sink& k, const State& before, const Op& o, const State& after) {
+  k.field("state.limit", before.limit);
+  k.field("state.pos", before.pos);
+  k.field("state.open", before.open);
+  k.field("op.q", o.q);
+  static const char* kKind[] = {"submit", "cancel", "fill", "reduce"};
+  const char* kind = kKind[o.op % 4];
+  if (o.op % 4 == 0) k.outcome(after.last == 1 ? "submit accepted" : "submit rejected");
+  else k.outcome(kind);
+}
+
 // Runs under LSan's ScopedDisabler: one oracle call with values above 2^63.
 inline void warm_up() {
   const uint64_t m = UINT64_MAX;

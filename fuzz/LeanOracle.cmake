@@ -16,7 +16,9 @@
 #   A libFuzzer + ASan + UBSan executable built from diff_oracle_template.cpp. Header-only
 #   production code needs INCLUDE_DIRS only. Compiled production code: list its translation units
 #   in SOURCES (they are built with the same sanitizers) and/or its libraries in LINK_LIBRARIES
-#   (prefer libraries built with -fsanitize=address,undefined).
+#   (prefer libraries built with -fsanitize=address,undefined). Also defines <name>_classify, the
+#   labels-only build (fv_classify.hpp) with the classes.hpp found next to the binding header; the
+#   verdict binary <name> contains no classify code and no classes.
 
 set(FV_DIFF_TEMPLATE "${CMAKE_CURRENT_LIST_DIR}/diff_oracle_template.cpp")
 
@@ -75,17 +77,42 @@ function(lean_oracle_library name)
   target_link_options(${name} PUBLIC "-Wl,-rpath,${prefix}/lib/lean")
 endfunction()
 
+function(_fv_diff_target tname)  # _fv_diff_target(<target> <binding> <oracle> <classify> ...)
+  set(binding "${ARGV1}")
+  set(oracle "${ARGV2}")
+  set(classify "${ARGV3}")
+  cmake_parse_arguments(B "" "" "INCLUDE_DIRS;SOURCES;LINK_LIBRARIES" ${ARGN})
+  add_executable(${tname} "${FV_DIFF_TEMPLATE}" ${B_SOURCES})
+  target_compile_features(${tname} PRIVATE cxx_std_17)
+  target_compile_definitions(${tname} PRIVATE "DIFF_ORACLE_BINDING=\"${binding}\"")
+  if(classify)
+    target_compile_definitions(${tname} PRIVATE FV_CLASSIFY_BUILD=1)
+    get_filename_component(_fv_bdir "${binding}" DIRECTORY)
+    if(EXISTS "${_fv_bdir}/classes.hpp")
+      target_compile_definitions(${tname} PRIVATE "FV_CLASSES_HEADER=\"${_fv_bdir}/classes.hpp\"")
+    endif()
+  endif()
+  target_include_directories(${tname} PRIVATE ${B_INCLUDE_DIRS})
+  set(san -fsanitize=fuzzer,address,undefined)
+  target_compile_options(${tname} PRIVATE ${san} -fno-sanitize-recover=all -g -O1)
+  target_link_options(${tname} PRIVATE ${san})
+  target_link_libraries(${tname} PRIVATE ${oracle} ${B_LINK_LIBRARIES})
+endfunction()
+
+# Two executables: <name>, the verdict binary (no classify code at all), and <name>_classify,
+# used only by the labels-only replay after a campaign.
 function(add_diff_fuzzer name)
   cmake_parse_arguments(A "" "BINDING;ORACLE" "INCLUDE_DIRS;SOURCES;LINK_LIBRARIES" ${ARGN})
   if(NOT A_BINDING OR NOT A_ORACLE)
     message(FATAL_ERROR "add_diff_fuzzer: BINDING and ORACLE are required")
   endif()
-  add_executable(${name} "${FV_DIFF_TEMPLATE}" ${A_SOURCES})
-  target_compile_features(${name} PRIVATE cxx_std_17)
-  target_compile_definitions(${name} PRIVATE "DIFF_ORACLE_BINDING=\"${A_BINDING}\"")
-  target_include_directories(${name} PRIVATE ${A_INCLUDE_DIRS})
-  set(san -fsanitize=fuzzer,address,undefined)
-  target_compile_options(${name} PRIVATE ${san} -fno-sanitize-recover=all -g -O1)
-  target_link_options(${name} PRIVATE ${san})
-  target_link_libraries(${name} PRIVATE ${A_ORACLE} ${A_LINK_LIBRARIES})
+  foreach(variant IN ITEMS 0 1)
+    if(variant)
+      set(tname ${name}_classify)
+    else()
+      set(tname ${name})
+    endif()
+    _fv_diff_target(${tname} "${A_BINDING}" ${A_ORACLE} ${variant}
+                    INCLUDE_DIRS ${A_INCLUDE_DIRS} SOURCES ${A_SOURCES} LINK_LIBRARIES ${A_LINK_LIBRARIES})
+  endforeach()
 endfunction()

@@ -111,3 +111,119 @@ adding it, estimate the export size and the con-* check time on a trial build.
 
 Until then the core-only prompt note and the pre-compile Mathlib filter in the dispatcher stay in
 force.
+
+## 5. Edge-case classification: what a reviewer sees, and what it is not
+
+**What it is for.** A PASS over 10^6 runs says nothing about inputs the generator never made. The
+classifier tells a reviewer which behaviours the campaign actually exercised. It also tells them
+which it did not.
+
+**Where it runs.** In a separate replay after the campaign (`fuzz/run_fuzz.sh` step 6). It uses a
+**separate executable**: `add_diff_fuzzer(<name>)` builds two from the same sources.
+- `<name>` is the verdict binary. It is compiled **without** any classify code and without
+  `classes.hpp`.
+- `<name>_classify` is compiled with `-DFV_CLASSIFY_BUILD`. It decodes each corpus input exactly
+  as the campaign did, walks it through the Lean oracle only, records classes and never compares.
+
+So nothing at run time (an exported variable, a static constructor in the binding or in linked
+code) can switch the verdict binary into a no-compare mode: that code is not in it.
+- `run_fuzz.sh` also clears the classify variables.
+- It refuses, with ERROR, any replay, campaign or merge log carrying the classify build's
+  start-up line.
+- Control `c13_classify_env` runs a drifting implementation with those variables exported and
+  must still FAIL. It also checks with `nm` that the verdict binary lacks the classify marker.
+
+Consequently a class is computed from the input and the oracle's output, never from the
+implementation.
+
+**Labels only.** Classification never decides PASS/FAIL:
+- the verdict is fixed before it runs;
+- a failure inside it is recorded as an error string;
+- the verdict code is unchanged.
+
+The class predicates in `classes.hpp` live outside the signed lock. They are recorded by sha256 in
+`fuzz.json` and the closure, and printed with their source in `closure.md` and the review deck,
+so the reviewer reads what each class checks.
+
+**Classes.**
+- **Generic** (from the binding's `describe()`):
+  - field values 0, 1, max, max−1, 2^k or 2^k±1 (signed: −1, 0, 1, min, max);
+  - collections empty, single, with equal elements;
+  - divisions exact vs remainder = divisor−1, and divisor 0.
+- **Outcome labels:** informational.
+- **Domain classes:** the spec author's `FV_CLASS` predicates.
+- A step with no generic or domain class is **regular**.
+
+**Outputs.**
+- the class × inputs × steps × % table in `fuzz.json` (`classes`) and `closure.json`
+  (`edge_cases`);
+- a **NOT EXERCISED** list, first in `closure.md` and in the deck;
+- `classify/review_deck.md`: the smallest input per class, decoded step by step with the oracle's
+  output;
+- on FAIL, every reproducer's classes (`finding_classes`).
+
+**First result.** On the risk-limit example the classifier showed straight away what the PASS
+hid. The generator starts with `limit = 0` in about 70 % of inputs. It never produces a position
+or open quantity near 2^64. Its own first domain class also had a bug: `headroom + 1` wrapped in
+64-bit C++ and matched `q = 0`. Predicates now use `fvfuzz::u128` where sums can pass 2^64.
+
+**What "NOT EXERCISED" means today.** The replay classifies the persisted corpus. libFuzzer keeps
+only inputs that add code coverage. An edge case the campaign generated many times can still be
+absent, because no input carrying it added coverage. On the fixture, "fee rate exactly at the
+cap" is listed although 10,000 is one of the generator's favoured values. Read each entry as "not
+shown to be covered". Add a seed for it, or widen the generator. A class-guided retention pass is
+a proposed follow-up: a separate process that keeps one input per class, so absence would mean
+"never generated".
+
+**Control.** `c9_edge_not_exercised` caps the fixture generator's fee rate at 10,000 basis
+points. The class "fee rate above the cap" must be NOT EXERCISED while the verdict stays PASS.
+With the normal generator (c1) the same class must be hit.
+
+## 6. Leaks, hangs, unbounded memory and slow loops
+
+COUPLE checks more than equal outputs. Each failure has its own verdict detail and keeps a
+reproducer. Limits are per project, under `[fuzz]` in `fv.toml` in the fuzz directory. They must be positive
+whole numbers. libFuzzer reads 0 as "no limit", so `fv.toml` (which lies outside the lock) could
+otherwise switch HANG or OOM detection off. A 0 is refused with ERROR, before anything is built
+(control `c14_zero_limits`).
+
+| Failure | How it is caught | Verdict detail | Control |
+|---|---|---|---|
+| Memory leak (unreachable memory) | LeakSanitizer, per input and at exit | `LEAK: Direct leak of N byte(s) in M object(s)` | c7 (every call), c10 (one input class; the finding carries that class) |
+| Infinite or runaway loop | libFuzzer `-timeout` (`timeout`, default 10 s per input) | `HANG: input exceeded N s` | c11 (an endless loop on one fee rate, `timeout = 2`) |
+| Unbounded growth of reachable memory | libFuzzer `-rss_limit_mb` / `-malloc_limit_mb` (default 2048) | `OOM: out-of-memory (...)` | c12 (a cache that grows 1 MiB per call, `rss_limit_mb = 256`) |
+| Memory errors, undefined behaviour | ASan, UBSan | `sanitizer: ...` | — |
+| Wrong result | the oracle comparison | `oracle/implementation mismatch` | c6 |
+
+**What LeakSanitizer cannot see.** A leak is memory that nothing points to any more. A map or
+cache that keeps growing while still reachable is not a leak; only the RSS limit stops it (c12).
+Size `rss_limit_mb` for the largest legitimate state, so that growth beyond it is a finding. An OOM from growth across many inputs is reported against whichever input was running when the limit was crossed, so its reproducer alone may not reproduce it; the verdict and the growth are the finding.
+
+**Slow inputs and bad loops.** Slow inputs are reported but are not a failure. There are two
+reports:
+- the campaign lists inputs slower than `report_slow_units` seconds in `fuzz.json`
+  (`slow_units`);
+- the classification replay times each input's C++ steps, with outputs discarded, and the review
+  deck shows the 5 slowest by time per step. The slowest 1 % form an informational
+  `timing` class.
+
+A short input that is far slower per step than the median points at an accidental quadratic or a
+loop over a growing structure.
+
+**Coupling a cost bound (optional, per project).** Termination of the C++ cannot be proved here.
+A cost bound can be coupled, though:
+- Let the model and the implementation both return an iteration or step counter as part of the
+  compared state.
+- State the bound on the model, e.g. `iterations ≤ number of entries`. The Lean model always
+  terminates, because `partial` and `unsafe` are rejected by the lint.
+- The fuzzer then fails any input where the C++ count differs from the model's.
+
+This couples a *cost bound* to the real code on every input the campaign reaches. It is not a
+termination proof for the C++.
+
+**For contracts (EVM and EVM-like chains), gas or energy is the natural measure.** An infinite loop is
+out-of-gas. A "bad loop" is a loop over storage that users can grow: once it passes the block
+limit it is a denial-of-service and stuck-funds risk. The EVM pack (design pending) plans a
+gas-vs-input-size report, and optional statements such as "gas ≤ G for any state with ≤ N
+entries".
+

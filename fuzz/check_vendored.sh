@@ -13,7 +13,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 dir="${1:?usage: $0 FUZZ_DIR}"
 out="{}"; rc=0
-for name in LeanOracle.cmake diff_oracle_template.cpp; do
+for name in LeanOracle.cmake diff_oracle_template.cpp fv_classify.hpp; do
   f="$dir/$name"
   [ -e "$f" ] || [ -L "$f" ] || continue
   first=$(head -1 "$HERE/$name")

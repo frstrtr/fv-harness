@@ -360,6 +360,8 @@ def cmd_close(a):
                     "con_leche_compare": grab("con_leche_compare", r"^con-leche: (accepted|theorem)")},
         "fuzz": {k: fz.get(k) for k in ("verdict", "runs", "max_total_time", "campaign_seconds", "stats", "corpus",
                                         "vendored")},
+        # Edge-case classes: labels for the reviewer, never part of the verdict.
+        "edge_cases": fz.get("classes"),
         "provenance": verdict.get("provenance"),
         "tier2": {"budget": st.get("budget"), "max_attempts": st.get("max_attempts"),
                   "same_failure_wall": st.get("same_failure_wall"), "stats": st.get("tier2_stats")},
@@ -385,6 +387,21 @@ def cmd_close(a):
     md += ["", "## Differential fuzz", f"- {fz.get('stats', '').strip()}", f"- {fz.get('campaign_seconds')} s"]
     md += [f"- vendored {k}: harness {v.get('cited_commit')}, body sha256 {v.get('body_sha256')}, match={v.get('match')}"
            for k, v in (fz.get("vendored") or {}).items()]
+    ec = fz.get("classes") or {}
+    md += ["", "## Edge-case coverage (labels only; never part of the verdict)"]
+    if not ec:
+        md += ["- not classified (the binding has no describe() and no classes.hpp, or FV_NO_CLASSIFY=1)"]
+    elif ec.get("error"):
+        md += [f"- {ec['error']}"]
+    else:
+        md += [f"- {ec.get('inputs')} distinct corpus inputs, {ec.get('steps')} steps; regular: "
+               f"{ec.get('regular_inputs')} inputs, {ec.get('regular_steps')} steps",
+               f"- classes.hpp sha256: `{ec.get('classes_header_sha256')}`; review deck: `{ec.get('review_deck')}`",
+               "- **NOT EXERCISED (in the retained corpus):** " + (", ".join(ec.get("not_exercised") or []) or "none")]
+        md += [f"- {t['class']}: {t['inputs']} inputs ({t['pct_inputs']} %), {t['steps']} steps"
+               + (f" — `{t['source']}`" if t.get("source") else "") for t in ec.get("classes", [])]
+        if ec.get("finding_classes"):
+            md += [f"- finding `{f}`: {', '.join(c) or 'regular'}" for f, c in ec["finding_classes"].items()]
     md += ["", "## Timeline"] + [f"- {h['t']} {h.get('from', '')} -> {h.get('to', h.get('event', ''))}: {h.get('note', '')}"
                                   for h in st["history"]]
     (t.dir / "closure.md").write_text("\n".join(md) + "\n")
