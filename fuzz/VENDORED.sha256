@@ -1,9 +1,10 @@
-# Released bodies of the harness files a project may vendor into its fuzz directory:
-# <harness commit> <file> <sha256 of the file as it is in the harness at that commit>
-# A vendored copy carries a comment header naming the commit ("Vendored from fv-harness <commit>");
-# run_fuzz.sh FAILs COUPLE unless the copy below its header hashes to the line for that commit.
-# A release tag (vX.Y.Z) must match exactly; a commit id may be abbreviated. Add lines for every
-# release, and for every commit that changes one of these files.
+# Bodies of the harness files a project may vendor into its fuzz directory:
+# <release tag or harness commit> <file> <sha256 of the file as it is in the harness at that point>
+# A vendored copy carries a comment header naming its source ("Vendored from fv-harness <id>");
+# fuzz/check_vendored.sh FAILs COUPLE unless the copy below its header hashes to the line for that id.
+# A release tag (vX.Y.Z) is added once, at the release, and never changed; it must match exactly.
+# A commit id may be abbreviated. Pin lines for a commit are added in a LATER commit (a commit
+# cannot contain its own id), before any project vendors from it.
 4a75fba LeanOracle.cmake f234243d93f16cc6412c8834f5abb89f00af3a87cc90129931af0989fc07b14f
 9479b34 LeanOracle.cmake f234243d93f16cc6412c8834f5abb89f00af3a87cc90129931af0989fc07b14f
 72e3577ad0cc LeanOracle.cmake f234243d93f16cc6412c8834f5abb89f00af3a87cc90129931af0989fc07b14f
@@ -12,3 +13,9 @@
 72e3577ad0cc diff_oracle_template.cpp 469a6e82e5e273ca6c9917e314272ce02fd5452920255b8855c0d15202de37c4
 v0.1.0 LeanOracle.cmake e2c0d2f0ee623cebd888948895050da4728b4e6b52f7aa8860ef8689ccdacbeb
 v0.1.0 diff_oracle_template.cpp 469a6e82e5e273ca6c9917e314272ce02fd5452920255b8855c0d15202de37c4
+v0.2.0 LeanOracle.cmake b56af078cae0f9c2d5aaeb7e984c436d2ee6e260651a6a956ec79f1fd22162d8
+v0.2.0 diff_oracle_template.cpp 545e13f73bf942e548f32752aa5fa724c722cd1689f77ee46bb882bd6984cce1
+v0.2.0 fv_classify.hpp 2777f2120b12ec42753b7bc9bb2862549e93b45a762d47a1af593b8b4463a58d
+v0.2.0 fv_diff.rs 36d0b51136699aeb23d66712d84e49b26c39e3c6eecf066a4f6bd2083e6aff26
+v0.2.0 fv_diff.py fa948bc19c1f96190bbbf871ee054cb1792b61bbe5cc094632e2424c51913a29
+v0.2.0 fv_evm.rs f16519192f6aa5c1f07e9f9e700899fdc8236a42bcba1206a157b2300d23d07f

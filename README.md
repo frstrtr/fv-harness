@@ -23,10 +23,6 @@ The pipeline:
 - `docs/CASE-STUDIES.md`: what it found on first use.
 - `examples/risk-limit/`: a pre-trade risk check, with a correct and an overflow-buggy C++ variant.
 - `docs/HARDWARE.md`: machine profiles (minimum and recommended) and the prover models by GPU class. No GPU is needed for the gate.
-- `docs/LANGUAGES.md`: languages beyond C++. Rust is shipped (`examples/risk-limit-rust`); Python,
-  EVM, Go, Java/Kotlin and JS are planned. It also covers how each binds to the oracle.
-- `docs/LANGUAGES.md`: languages beyond C++. Rust and Python are shipped (`examples/risk-limit-rust`,
-  `examples/risk-limit-py`); EVM, Go, Java/Kotlin and JS are planned. It also covers how each binds to the oracle.
 - `docs/LANGUAGES.md`: languages beyond C++. Rust, Python and Solidity/EVM are shipped
   (`examples/risk-limit-rust`, `examples/risk-limit-py`, `examples/risk-limit-evm`); Go, Java/Kotlin
   and JS are planned. It also covers how each binds to the oracle.
@@ -56,8 +52,7 @@ before this repository's single root commit.
 | `fuzz/diff_oracle_template.cpp` | Reusable differential fuzzer (Module 5) |
 | `fuzz/LeanOracle.cmake` | `lean_oracle_library()` and `add_diff_fuzzer()` CMake functions |
 | `fuzz/run_fuzz.sh` | COUPLE stage: lock check, oracle build, corpus replay, campaign, corpus merge |
-| `tests/harness_fv_controls/` | Acceptance controls (spec §4) |
-| `tests/harness_fv_controls/` | Acceptance controls (spec §4) and their logs. Hosted CI runs the gate and C++ controls; the language controls (c15–c29) SKIP there and are verified on a gate host, not in CI (`docs/LANGUAGES.md`) |
+| `tests/harness_fv_controls/` | Acceptance controls (spec §4) and a neutral summary of a clean run (`evidence/`). Hosted CI runs the gate and C++ controls; the language controls (c15–c29) SKIP there and are verified on a gate host, not in CI (`docs/LANGUAGES.md`) |
 | `scripts/lean_lsp_mcp.sh`, `scripts/preflight_lake_build.sh` | Module 1: sandboxed lean-lsp MCP server; pre-flight build |
 | `prover/` | Module 3: Tier-2 endpoint (`tier2_server.sh`) and `dispatch_local_prover` (`dispatch.sh`) |
 | `config/tier2.env` | Tier-2 endpoint and server settings (the endpoint is config only) |
