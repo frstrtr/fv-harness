@@ -12,6 +12,33 @@ The pipeline:
   statement comparator.
 - A **differential fuzzer** ties the shipped C/C++ to the proved model bit for bit.
 
+## What it checks, and what it does not
+
+- **The proofs.** For a signed specification, the gate accepts a solution only if the Lean kernel and
+  four independent checkers accept its proofs. A statement comparator must also find the solution's
+  theorem statements identical to the signed ones, and only three standard axioms may be used. A
+  solution that weakens or replaces a statement is refused.
+- **The code.** The differential fuzzer runs the implementation and the proved model side by side and
+  compares them after every step. This is testing, not proof: it shows agreement on every input it
+  ran, guided by coverage and by boundary values, and it reports the first input where they differ.
+  "The implementation equals the model" is therefore evidence, not a theorem.
+- **The harness itself.** An acceptance control suite checks the gate and the fuzzer against
+  deliberately broken inputs: each control must reach the verdict the broken input calls for. One full
+  run of the suite on a gate host is published with each release (`tests/harness_fv_controls/evidence/`),
+  together with runs of the newer controls against the code before their fix, where they fail.
+- **Drafts.** `fuzz/run_fuzz.sh --draft` exercises an unsigned specification. Its results are stamped
+  as drafts and never count toward a closure.
+- **Languages.** Shipped: C++ (and C), Rust, Python, and Solidity contracts on an in-process EVM
+  (`examples/risk-limit`, `examples/risk-limit-rust`, `examples/risk-limit-py`,
+  `examples/risk-limit-evm`). Planned: contracts on the TRON Virtual Machine (TVM) in the next release,
+  then Go, Java/Kotlin and JavaScript/TypeScript. See `docs/LANGUAGES.md`.
+- **On first use.** While mapping an upstream project's functions to the statements of a
+  specification, we found a signed overflow in Dash Core's superblock payment total, by reading the
+  code during that mapping, not with the fuzzer. The Dash Core developers confirmed it and opened a fix
+  (`docs/CASE-STUDY-SUPERBLOCK-SUM.md`). The other case studies are anonymised and come from the
+  harness's first runs: on its own fixture, on the tools it builds on, and on its first production
+  specification (`docs/CASE-STUDIES.md`).
+
 ## Changes in v0.2.1
 
 - **COUPLE runs the task's language.** `formal_task.py init --lang cpp|rust|python|evm` (default

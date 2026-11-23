@@ -5,6 +5,10 @@ tools it builds on, and on its first production specification. They contain no p
 file, function or repository names. Section 8 is a named case, published after its public disclosure.
 Every number comes from a logged run.
 
+Section 8 is the only named case. Its lesson concerns the harness's limits as much as its use: the
+defect was found by reading the upstream code while mapping it to the specification, in a part the
+fuzzer did not execute.
+
 ## 1. A one-unit rounding drift, caught in 22 ms
 
 **Setting.** The fixture is a ledger transfer with a fee. The fee is rounded down in basis points.

@@ -17,6 +17,27 @@ are not installed. Their evidence is a run on a gate host that has all three too
 verdict codes and the edge-case classification replay stay the same wherever the fuzzer speaks
 libFuzzer's command line.
 
+## The shipped languages at a glance
+
+Each binds the implementation to the same Lean oracle and compares them after every step. Each has
+an example whose drift variant (a one-unit error) must FAIL.
+
+- **C++ (and C):** the fuzz target links the oracle's static library; the binding is a C++ header
+  (`binding.hpp`) built into `diff_oracle_template.cpp`. Under ASan, UBSan and LeakSanitizer. Example:
+  `examples/risk-limit`, and the fixture.
+- **Rust:** `cargo-fuzz` with a harness-owned driver (`fuzz/rust/fv_diff.rs`); the oracle comes in as
+  `oracle_shared`. Overflow checks stay on in the fuzz build, so a wrapping overflow is a finding.
+  Example: `examples/risk-limit-rust`.
+- **Python:** Atheris drives a harness-owned loop (`fuzz/python/fv_diff.py`); the binding calls the
+  oracle through `ctypes`. Every value is checked to stay within its declared 64-bit width. Example:
+  `examples/risk-limit-py`.
+- **Solidity / EVM:** the contract, compiled by a pinned solc, runs in revm inside the fuzz process,
+  next to the natively linked oracle; outcomes, return data and logs are compared. Example:
+  `examples/risk-limit-evm`.
+
+Planned: contracts on the TRON Virtual Machine (TVM), in the next release; then Go, Java/Kotlin and
+TypeScript/JavaScript (see the matrix and the recommended order below).
+
 ## Support matrix
 
 Checked at source on 2026-11-22.
@@ -30,6 +51,7 @@ Checked at source on 2026-11-22.
 | Go | native fuzzing (`go test -fuzz`, Go 1.27, BSD-3-Clause) | cgo to the static library | `-asan` with clang | planned | A different engine and command line: it needs its own runner, and its corpus format differs. |
 | Java / Kotlin | Jazzer (Apache-2.0) | JNA or the Panama FFI on `oracle_shared` | none for JVM code; native parts can use ASan | planned | needs a JVM; GC timing makes per-input timeouts noisier |
 | TypeScript / JavaScript | Jazzer.js (Apache-2.0) | N-API or an FFI module on `oracle_shared` | none for JS | planned | Number vs BigInt: 64-bit values must be BigInt end to end |
+| TRON-TVM contracts | the Python loop (Atheris); the contract runs on java-tron's own TRON-TVM, built from source at a pinned release and run offline | `ctypes` on `oracle_shared`, as for Python | none for the contract (energy is its cost measure) | planned, next release | a JVM reference executor: slower per call than an in-process EVM |
 | Solidity / EVM | libFuzzer through cargo-fuzz; the contract runs in revm 43.0.3 (MIT), in process; solc 0.8.39 (GPL-3.0, used as a compiler) | the oracle is linked natively into the same process | ASan over the EVM and the binding; the contract itself has none (gas and energy are its cost measure) | **shipped** (`examples/risk-limit-evm`) | A different shape (see below) |
 
 ## Rust: setup, pins and measured results
@@ -173,7 +195,9 @@ admissible), and the exact fields compared.
 3. **Python**: Atheris is libFuzzer underneath, so `run_fuzz.sh` reuses everything. Quant and
    risk prototypes often live in Python.
 4. **Solidity/EVM**: high value, but a different execution model (next section).
-5. **Go**, then **Java/Kotlin**, then **TypeScript/JS**. Each needs a runner for a different engine
+5. **TRON-TVM contracts**: TRC-10 opcodes and TRON's energy rules, which an EVM does not have; a
+   reference executor in the next release.
+6. **Go**, then **Java/Kotlin**, then **TypeScript/JS**. Each needs a runner for a different engine
    or a managed runtime.
 
 ## The shape of a binding in any language
@@ -187,8 +211,8 @@ Each language needs the same five pieces as `binding.hpp`:
 - on a difference, write the input to `$FV_FUZZ_ARTIFACT_DIR/mismatch-<hash>`, print both states,
   and exit with status **86**.
 
-A per-language drift control (a 1-unit error in that language's implementation) must FAIL within
-10 seconds before the binding is trusted.
+A per-language drift control (a 1-unit error in that language's implementation) must FAIL within its
+execution budget before the binding is trusted.
 
 ## Solidity / EVM: a different shape
 
