@@ -162,7 +162,8 @@ while read -r id res detail; do
 done < "$OUT/fuzz.out"
 grep -qE "^c1_fuzz " "$OUT/fuzz.out" && grep -qE "^c6_cpp_drift " "$OUT/fuzz.out" && grep -qE "^c7_lsan_leak " "$OUT/fuzz.out" && grep -qE "^c8_vendored_tamper " "$OUT/fuzz.out" && grep -qE "^c9_edge_not_exercised " "$OUT/fuzz.out" \
    && grep -qE "^c10_leak_class " "$OUT/fuzz.out" && grep -qE "^c11_hang " "$OUT/fuzz.out" && grep -qE "^c12_growth " "$OUT/fuzz.out" \
-   && grep -qE "^c13_classify_env " "$OUT/fuzz.out" && grep -qE "^c14_zero_limits " "$OUT/fuzz.out" && grep -qE "^c30_draft_not_countable " "$OUT/fuzz.out" && grep -qE "^c32_len_limits " "$OUT/fuzz.out" ||
+   && grep -qE "^c13_classify_env " "$OUT/fuzz.out" && grep -qE "^c14_zero_limits " "$OUT/fuzz.out" && grep -qE "^c30_draft_not_countable " "$OUT/fuzz.out" && grep -qE "^c32_len_limits " "$OUT/fuzz.out" \
+   && grep -qE "^c48_record_failure " "$OUT/fuzz.out" && grep -qE "^c53_merge_failure " "$OUT/fuzz.out" && grep -qE "^c54_merge_inner_exit " "$OUT/fuzz.out" ||
   report fuzz_controls WRONG "runner produced no verdict lines (see $OUT/fuzz.out)"
 
 # Languages beyond C++ (docs/LANGUAGES.md): SKIP when a toolchain is absent.

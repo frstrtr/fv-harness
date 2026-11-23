@@ -31,6 +31,13 @@
 #   c48_record_failure  the fuzz.json record is part of the verdict: with the writer's jq failing, a run
 #                 that would PASS and one that would FAIL each end ERROR (exit 3), never 0 or 1
 #                 (tests/harness_fv_controls/c48_record_failure.sh).
+#   c53_merge_failure  an implementation that is wrong only inside libFuzzer's corpus-merge inner
+#                 process (-merge_inner=1; fee one unit high on odd amounts): the campaign and replay pass,
+#                 the merge meets the mismatch; libFuzzer alone would retry without it and report success.
+#                 The run must FAIL (exit 1) naming the merge, with the mismatch recorded in fuzz.json and
+#                 the reproducer kept in the corpus. This control runs WITH the merge, into a copy.
+#   c54_merge_inner_exit  the inner merge process exits 1 on odd amounts (no finding): ERROR (exit 3),
+#                 never PASS.
 #   c30_draft_not_countable  a draft (an UNSIGNED spec_lock.sh manifest) can be validated with
 #                 run_fuzz.sh --draft but never counts: (a) the --draft run is stamped "DRAFT (unsigned, not
 #                 countable)" first in fuzz.log and fuzz.json, its verdict reads "DRAFT PASS", and the
@@ -249,4 +256,30 @@ else
 fi
 "$ROOT/tests/harness_fv_controls/c48_record_failure.sh" "$ROOT/fuzz/run_fuzz.sh" "${OUT:?}/c48" > "$OUT/c48.out" 2>&1 || fails=1
 grep -E '^c48_record_failure ' "$OUT/c48.out" || { echo "c48_record_failure WRONG no verdict line (see $OUT/c48.out)"; fails=1; }
+
+merged() { # merged ID IMPL_DIR  — a campaign WITH the corpus merge, into this control's own corpus copy
+  local id="$1" impl="$2"
+  rm -rf "$OUT/$id"; mkdir -p "$OUT/$id"
+  cp -r "$CPP/corpus" "$OUT/$id/corpus"
+  "$ROOT/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$CPP" --target diff_transfer \
+    --corpus "$OUT/$id/corpus" --impl-dir "$impl" --runs 20000 --out "$OUT/$id/run" > "$OUT/$id/run_fuzz.out" 2>&1
+}
+merged c53_merge_failure "$ROOT/tests/harness_fv_controls/variants/c53_merge_only"
+rc=$?; j="$OUT/c53_merge_failure/run/fuzz.json"
+cl=$(grep -c 'diff-oracle: MISMATCH' "$OUT/c53_merge_failure/run/campaign.log" 2>/dev/null)
+nart=$(ls "$OUT/c53_merge_failure/run/artifacts/" 2>/dev/null | grep -vc '^slow-unit-')
+kept=0; for f in "$OUT/c53_merge_failure/run/artifacts/"*; do [ -f "$f" ] && cmp -s "$f" "$OUT/c53_merge_failure/corpus/$(basename "$f")" && kept=1; done
+if [ $rc -eq 1 ] && [ "$(jq -r .verdict "$j")" = FAIL ] && jq -r .detail "$j" | grep -q 'during the corpus merge: oracle/implementation mismatch' \
+   && [ -n "$(jq -r '.mismatch // empty' "$j")" ] && [ "${cl:-0}" -eq 0 ] && [ "$nart" -ge 1 ] && [ $kept -eq 1 ]; then
+  echo "c53_merge_failure OK FAIL during the merge (campaign clean, $(grep -c '^MERGE-OUTER: attempt' "$OUT/c53_merge_failure/run/merge.log") merge attempts), mismatch recorded, reproducer kept: $(jq -r .detail "$j" | cut -c1-110)"
+else
+  echo "c53_merge_failure WRONG exit=$rc campaign_mismatches=${cl:-?} artifacts=$nart kept=$kept $(jq -c '{verdict,detail,mismatch}' "$j" 2>/dev/null | cut -c1-300)"; fails=1
+fi
+merged c54_merge_inner_exit "$ROOT/tests/harness_fv_controls/variants/c54_merge_exit"
+rc=$?; j="$OUT/c54_merge_inner_exit/run/fuzz.json"
+if [ $rc -eq 3 ] && [ "$(jq -r .verdict "$j")" = ERROR ] && jq -r .detail "$j" | grep -q 'inner merge process failed without a finding'; then
+  echo "c54_merge_inner_exit OK ERROR: $(jq -r .detail "$j" | cut -c1-120)"
+else
+  echo "c54_merge_inner_exit WRONG exit=$rc $(jq -c '{verdict,detail}' "$j" 2>/dev/null | cut -c1-300)"; fails=1
+fi
 exit $fails

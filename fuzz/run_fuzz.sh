@@ -122,7 +122,7 @@ verdict() { # verdict EXIT VERDICT DETAIL
   jq -n --arg v "$v" --arg draft "$([ "$draft" -eq 1 ] && echo "$DRAFT_STAMP")" --argjson e "$1" --arg d "$3" --arg t "$target" --arg runs "${runs:-}" \
     --arg secs "${secs:-}" --arg corpus "$corpus" --arg impl "${impl:-default}" \
     --arg lock "$(sha256sum "$lock" | cut -d' ' -f1)" --arg el "${elapsed:-}" \
-    --arg mm "$(grep -m1 'diff-oracle: MISMATCH' "$RUN/campaign.log" 2>/dev/null)" \
+    --arg mm "$(cat "$RUN/campaign.log" "$RUN/merge.log" 2>/dev/null | grep -m1 'diff-oracle: MISMATCH')" \
     --arg art "$(ls "$RUN"/artifacts/ 2>/dev/null | head -1)" \
     --arg stats "$(grep -E '^(stat::number_of_executed_units|stat::average_exec_per_sec|stat::new_units_added)' "$RUN/campaign.log" 2>/dev/null | tr '\n' ' ')" \
     --argjson vend "${VENDORED_JSON:-{\}}" --argjson cls "${CLASSES_JSON:-null}" --argjson evm "${EVM_JSON:-null}" --arg lang "$lang" \
@@ -359,14 +359,32 @@ if [ $rc -ne 0 ]; then
 fi
 
 # 5. Corpus persistence.
+# The merge re-runs every input in a fresh inner process. A failure there is a finding: libFuzzer would
+# retry without that input and report success, so the run must not PASS. And with inputs to merge, the
+# merge must complete in one attempt, or something went wrong that it did not report.
 if [ "$merge" -eq 1 ]; then
-  capped "$BIN" "${LIMITS[@]}" -merge=1 "$corpus" "$RUN/new_corpus" > "$RUN/merge.log" 2>&1 || verdict 3 ERROR "corpus merge failed"
-  # libFuzzer exits 0 even when every inner merge process failed to start: a merge that began attempts
-  # must report success, or nothing was merged.
-  if grep -q '^MERGE-OUTER: attempt' "$RUN/merge.log" && ! grep -q '^MERGE-OUTER: successful in' "$RUN/merge.log"; then
-    verdict 3 ERROR "corpus merge did not run: $(grep -m1 -vE '^(MERGE-OUTER|INFO|WARNING)' "$RUN/merge.log" | cut -c1-160) ($(grep -c '^MERGE-OUTER: attempt' "$RUN/merge.log") attempts)"
-  fi
+  a0=$(find "$RUN/artifacts" -maxdepth 1 -type f ! -name 'slow-unit-*' | wc -l)
+  nin=$(find "$corpus" "$RUN/new_corpus" -maxdepth 1 -type f | wc -l)
+  capped "$BIN" "${LIMITS[@]}" -artifact_prefix="$RUN/artifacts/merge-" -merge=1 "$corpus" "$RUN/new_corpus" > "$RUN/merge.log" 2>&1
+  mrc=$?
   classify_line_in "$RUN/merge.log" && verdict 3 ERROR "the merge ran a classify build"
+  a1=$(find "$RUN/artifacts" -maxdepth 1 -type f ! -name 'slow-unit-*' | wc -l)
+  # A finding (mismatch, sanitizer, panic, exception, timeout, OOM, deadly signal) or a new artifact: FAIL,
+  # the reproducer joins the corpus. An inner process that died without a finding: ERROR.
+  if grep -qE 'diff-oracle: (MISMATCH|DOMAIN)|ERROR: (AddressSanitizer|LeakSanitizer|UndefinedBehaviorSanitizer|libFuzzer)|runtime error:|panicked at|Uncaught Python exception' "$RUN/merge.log" \
+     || [ "$a1" -gt "$a0" ]; then
+    keep_reproducers
+    classify findings
+    kind=$(fail_kind "$RUN/merge.log")
+    verdict 1 FAIL "during the corpus merge: ${kind:-a new artifact in the inner merge process} ($(grep -c '^MERGE-OUTER: attempt' "$RUN/merge.log") attempt(s); the campaign itself passed)"
+  fi
+  if grep -q 'caused a failure at the previous merge step' "$RUN/merge.log"; then
+    verdict 3 ERROR "an inner merge process failed without a finding: $(grep -m1 'caused a failure at the previous merge step' "$RUN/merge.log" | cut -c1-200) ($(grep -c '^MERGE-OUTER: attempt' "$RUN/merge.log") attempts)"
+  fi
+  [ $mrc -eq 0 ] || verdict 3 ERROR "corpus merge failed (exit $mrc)"
+  if [ "$nin" -gt 0 ] && ! { grep -qx 'MERGE-OUTER: successful in 1 attempt(s)' "$RUN/merge.log" && grep -qE '^MERGE-OUTER: [0-9]+ new files' "$RUN/merge.log"; }; then
+    verdict 3 ERROR "corpus merge did not complete in one attempt: $(grep -m1 -vE '^(MERGE-OUTER|INFO|WARNING|#)' "$RUN/merge.log" | cut -c1-160) ($(grep -c '^MERGE-OUTER: attempt' "$RUN/merge.log") attempts)"
+  fi
 fi
 # 6. Edge-case classification (labels only).
 classify corpus
