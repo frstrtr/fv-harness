@@ -46,6 +46,16 @@ the model card's licence field and the licence file at the pinned revision.
 | solc (static Linux build) | 0.8.39+commit.ce47f2c8 (sha256 `b8b0642d46838575d3177628b685564b52f51f2aee546cb4dce781951d23c666`); a compiler, run as a separate program | GPL-3.0 | github.com/ethereum/solidity |
 | revm | 43.0.3 (crate checksum `62b2fbb3bdce72fef4f156e2164bdfde44dc3aeebc5b4f31a413fba0c09c524c`), `default-features = false, features = ["std"]`; 130 packages for linux x86_64, pinned in `examples/risk-limit-evm/fuzz/Cargo.lock`, all MIT, Apache-2.0, BSD-2/3-Clause, CC0-1.0 or Zlib | MIT | github.com/bluealloy/revm |
 
+## TRON Virtual Machine (TVM) reference executor (optional; only for TRON-TVM contracts under test)
+
+| Component | Pinned version | Licence | Source |
+|---|---|---|---|
+| java-tron | GreatVoyage-v4.8.2.4, commit `4e8389f159d0782f1ebcd9dab2fd88388c0e6fe9`, built from source and used unmodified as a separate process; its build dependencies are checksum-verified by its own `gradle/verification-metadata.xml` | LGPL-3.0 | github.com/tronprotocol/java-tron |
+| Temurin JDK 8 | 8u514-b01 (tarball sha256 `27eda854481d20806d918b30cdd417c6bed4fd15882e24f3595dc8ae7fb5d095`) | GPL-2.0 with Classpath Exception | adoptium.net |
+| Gradle | 7.6.4 distribution (sha256 `bed1da33cca0f557ab13691c77f38bb67388119e4794d113e051039b80af9bb1`), build only | Apache-2.0 | services.gradle.org |
+| TRON solc | 0.5.18 (`tv_0.5.18`), binary sha256 `27ebd5dcc78f99e60d138cebcf642dc01dcd3cd7d4c7ce24569bbdd136cdbc27`; a compiler, run as a separate program | GPL-3.0 | github.com/tronprotocol/solidity |
+| TRON mainnet chain parameters | `fuzz/tron-tvm/profiles/mainnet-20261122.json`, the public `wallet/getchainparameters` answer of 2026-11-22 | public chain data | api.trongrid.io |
+
 ## Sandbox, compiler and fuzzer (distribution packages)
 
 | Component | Version used | Licence | Source |

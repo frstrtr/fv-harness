@@ -3,3 +3,4 @@
 # A change to this file is a visible diff; the fixture key must never be pinned for a real project.
 conservation SHA256:R6l4wkshUPWT3e1nrbQysrKihLdvMoY9Sh+q9EfNtMw FIXTURE-ONLY test key held by the gate operator
 risk-limit SHA256:R6l4wkshUPWT3e1nrbQysrKihLdvMoY9Sh+q9EfNtMw FIXTURE-ONLY test key held by the gate operator (example)
+token-faucet SHA256:R6l4wkshUPWT3e1nrbQysrKihLdvMoY9Sh+q9EfNtMw FIXTURE-ONLY test key held by the gate operator (example)

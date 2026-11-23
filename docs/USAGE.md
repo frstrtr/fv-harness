@@ -200,6 +200,10 @@ fuzz/run_fuzz.sh --lean-project "$P/lean" --lock locks/$N.sha256 --cmake-dir "$P
 #   exit 0 PASS / 1 FAIL (mismatch or sanitizer report; reproducer in the run's artifacts/) / 2 BLOCKED
 ```
 
+The sanitizers cover your implementation and the harness's buffers, not the Lean oracle's heap
+(Lean's runtime uses its own allocator, mimalloc); the oracle side is covered by the gate's kernel
+and comparator checks and by control c50 (docs/LANGUAGES.md).
+
 Seed `corpus/` with realistic inputs if you have them. Then plant one deliberate bug in a copy of
 your C++ and check that the fuzzer finds it, as `cpp/impl-buggy` does in the example.
 `scripts/formal_task.py` drives the same steps as a state machine, with a closure report

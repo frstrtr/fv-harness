@@ -1,0 +1,11 @@
+# Per-project settings read by fuzz/run_fuzz.sh.
+[tron-tvm]
+contract = "CappedFaucet"       # the contract to deploy
+source = "CappedFaucet.sol"     # its file in the implementation directory
+evm_version = "petersburg"      # the TRON compiler's target (0.5.x)
+optimizer = true
+optimizer_runs = 200
+profile = "mainnet-20261122"    # chain parameters of the reference node (fuzz/tron-tvm/profiles/)
+
+[fuzz]
+timeout = 60                    # seconds per input: up to 64 transactions through the JVM

@@ -6,8 +6,9 @@
 #   rust    examples/risk-limit-rust   (impl, impl-drift)
 #   python  examples/risk-limit-py     (impl, impl-drift)
 #   evm     examples/risk-limit-evm    (contract, contract-drift)
+#   tron-tvm examples/token-faucet-tron-tvm (contract, contract-drift)
 # Checks per language: the closure's fuzz.lang is the task's, the implementation digests list the
-# example's own files (not a C++ default), the evm pins are recorded for EVM, and the
+# example's own files (not a C++ default), the evm / tron-tvm pins are recorded for those languages, and the
 # drift task's bugfix record names the language. Every example is copied first: the COUPLE corpus
 # merge writes only to the copy. Exit 0 iff every language behaves as expected.
 set -uo pipefail
@@ -15,7 +16,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib.sh"
 FT="python3 -I $ROOT/scripts/formal_task.py"
 W="$FV_ROOT/work/lang-rehearsal"; TASKS="$FV_ROOT/tasks"
-langs=("$@"); [ ${#langs[@]} -gt 0 ] || langs=(cpp rust python evm)
+langs=("$@"); [ ${#langs[@]} -gt 0 ] || langs=(cpp rust python evm tron-tvm)
 fails=0; rm -rf "${W:?}"; mkdir -p "$W" "$TASKS"
 for lang in "${langs[@]}"; do
   case "$lang" in
@@ -23,6 +24,7 @@ for lang in "${langs[@]}"; do
     rust) ex=risk-limit-rust; lean=risk-limit/lean; lock=risk-limit; fz=fuzz; good=impl; bad=impl-drift; tgt=diff_risk; given=0 ;;
     python) ex=risk-limit-py; lean=risk-limit/lean; lock=risk-limit; fz=fuzz; good=impl; bad=impl-drift; tgt=diff_risk; given=0 ;;
     evm) ex=risk-limit-evm; lean=risk-limit/lean; lock=risk-limit; fz=fuzz; good=contract; bad=contract-drift; tgt=diff_risk; given=0 ;;
+    tron-tvm) ex=token-faucet-tron-tvm; lean=token-faucet-tron-tvm/lean; lock=token-faucet; fz=fuzz; good=contract; bad=contract-drift; tgt=diff_faucet; given=0 ;;
     *) echo "WRONG unknown language $lang"; fails=1; continue ;;
   esac
   for kind in good bad; do
@@ -43,9 +45,10 @@ for lang in "${langs[@]}"; do
       want_dir="$D/ex/$good"
       if [ "$st" = CLOSED ] && jq -e --arg l "$lang" --arg d "$(cd "$want_dir" && pwd)" '.fuzz.lang == $l and .fuzz.verdict == "PASS"
            and .source_digests.impl.lang == $l and .source_digests.impl.dir == $d and (.source_digests.impl.files | length) > 0
-           and (if ($l == "evm") then (.fuzz.evm | type) == "object" else .fuzz.evm == null end)' "$C" > /dev/null \
+           and (if ($l == "evm") then (.fuzz.evm | type) == "object" elif ($l == "tron-tvm") then (.fuzz.tron_tvm | type) == "object"
+                else .fuzz.evm == null and .fuzz.tron_tvm == null end)' "$C" > /dev/null \
          && grep -q "language: \`$lang\`" "$TASKS/$T/closure.md"; then
-        echo "OK    $lang: CLOSED, closure fuzz.lang $lang, impl $(jq -r '.source_digests.impl.files | length' "$C") file(s) from $good$([ "$lang" = evm ] && echo ", evm pins recorded")"
+        echo "OK    $lang: CLOSED, closure fuzz.lang $lang, impl $(jq -r '.source_digests.impl.files | length' "$C") file(s) from $good$([ "$lang" = evm ] || [ "$lang" = tron-tvm ] && echo ", $lang pins recorded")"
       else
         echo "WRONG $lang: state $st $(jq -c '{lang: .fuzz.lang, verdict: .fuzz.verdict, impl: .source_digests.impl.dir}' "$C" 2>/dev/null) $(tail -3 "$D/steps.out" | tr '\n' ' ' | cut -c1-300)"; fails=1
       fi

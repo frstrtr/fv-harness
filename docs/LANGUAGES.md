@@ -129,7 +129,25 @@ The split is the same as for C++ and Rust:
   implements `initial_state`, `make_op`, `oracle_step`, `impl_step`, `u64_values`, `same` and
   `show_*`. It must not define `TestOneInput` or call `atheris.Setup/Fuzz`; `run_fuzz.sh` refuses
   a binding that does.
-- A vendored copy of the driver is pinned like the other harness files.
+- A vendored copy of the driver is pinned like the other harness files (with `fv_oracle_bytes.py`,
+  which it imports for the ByteArray oracle ABI).
+
+**Wide values: the ByteArray oracle ABI.** For states that do not fit 64-bit fields (160-bit
+addresses, 256-bit words, mappings), the spec exports `@[export fv_x] def f (input : ByteArray) :
+ByteArray` and the fuzz CMakeLists lists it: `lean_oracle_shared(<target>_oracle ORACLE … BYTES fv_x)`.
+The binding declares `ORACLE_BYTES = {"fv_x": <exact output length in bytes>}` and calls
+`lib.bytes_oracle.call("fv_x", data)`. Ownership is Lean's own convention for exports (Lean 4.36 allows
+no borrow annotation on `@[export]`): the generated wrapper hands its freshly built input to the
+function, which consumes it, and releases the result after copying it out. A result of any other
+length than declared is ERROR (`diff-oracle: ORACLE ERROR`, exit 87, nothing kept), never truncated.
+Control c50 checks the wrapper: no memory growth over 2 × 100,000 calls of 8 KiB, exactly one
+reference consumed, the length check, and an unchanged library when no BYTES are listed.
+
+**Memory checking and Lean's heap.** The sanitizers (ASan, UBSan, LSan) cover the implementation under
+test and the harness's own buffers. Lean's runtime allocates its objects with its bundled mimalloc,
+which the sanitizers do not see: a memory error on the Lean side is caught only by checks of the c50
+kind (memory growth, reference counts) and by the gate's kernel and comparator checks of the spec,
+not by a sanitizer report.
 
 **Integer domain: a modelling assumption, made explicit.** Python integers are unbounded, while
 the oracle's C boundary is unsigned 64-bit. The driver therefore does **not** reduce the
@@ -164,6 +182,19 @@ the verdict mechanics** against:
 They do **not** protect against a hostile binding. Therefore every project's REVIEW-NOTE must show
 its binding: the binding header or module, its `initial_state` (which inputs count as
 admissible), and the exact fields compared.
+
+## TRON Virtual Machine (TVM): a reference executor
+
+TRON-TVM contracts use opcodes that revm does not have: CALLTOKEN, TOKENBALANCE, CALLTOKENVALUE,
+CALLTOKENID, and TRON's energy rules. `fuzz/run_fuzz.sh --lang tron-tvm` runs them on **java-tron's own
+TRON-TVM**, built from source at a pinned release and run offline, with a pinned chain-parameter
+profile. Inputs come from the same Python loop as `--lang python`. Every implementation step must send at least one transaction, and only an oracle/contract difference is a finding (executor failures, timeouts and binding exceptions are ERROR): see "Rules for a binding" in `docs/TRON-TVM-REFERENCE.md`. See `docs/TRON-TVM-REFERENCE.md` for
+the pins, the reproducible build, and what is and is not covered (no `OUT_OF_TIME`; contract
+coverage is measured but does not guide the fuzzer). Each outcome carries the VM's **internal
+transactions** as an ordered list (`Outcome.internal`: note, sender, recipient, TRX value, TRC-10
+tokens, rejected), compared as a whole: a missing, extra or reordered transfer is a mismatch (control
+c49). The example is `examples/token-faucet-tron-tvm`, a capped TRC-10 faucet. A fast in-process TRON-TVM is planned, differential-tested against this
+reference.
 
 ## Recommended order
 
