@@ -268,7 +268,8 @@ case "$lang" in
     fi
     so="$RUN/build/lib${target}_oracle.so"; [ -f "$so" ] || verdict 3 ERROR "no oracle library $so"
     BIN="$RUN/fuzz-$target"
-    printf '#!/bin/sh\nexec env FV_BINDING=%q FV_IMPL_DIR=%q FV_ORACLE_SO=%q %q -I %q "$@"\n' \
+    # FV_SELF: libFuzzer re-executes argv[0] for the corpus merge; fv_diff.py makes that this wrapper.
+    printf '#!/bin/sh\nexec env FV_SELF=%q FV_BINDING=%q FV_IMPL_DIR=%q FV_ORACLE_SO=%q %q -I %q "$@"\n' "$BIN" \
       "$bnd" "$impl_dir" "$so" "$py" "$HERE/python/fv_diff.py" > "$BIN"
     chmod +x "$BIN"
     impl="$impl_dir"
@@ -360,6 +361,11 @@ fi
 # 5. Corpus persistence.
 if [ "$merge" -eq 1 ]; then
   capped "$BIN" "${LIMITS[@]}" -merge=1 "$corpus" "$RUN/new_corpus" > "$RUN/merge.log" 2>&1 || verdict 3 ERROR "corpus merge failed"
+  # libFuzzer exits 0 even when every inner merge process failed to start: a merge that began attempts
+  # must report success, or nothing was merged.
+  if grep -q '^MERGE-OUTER: attempt' "$RUN/merge.log" && ! grep -q '^MERGE-OUTER: successful in' "$RUN/merge.log"; then
+    verdict 3 ERROR "corpus merge did not run: $(grep -m1 -vE '^(MERGE-OUTER|INFO|WARNING)' "$RUN/merge.log" | cut -c1-160) ($(grep -c '^MERGE-OUTER: attempt' "$RUN/merge.log") attempts)"
+  fi
   classify_line_in "$RUN/merge.log" && verdict 3 ERROR "the merge ran a classify build"
 fi
 # 6. Edge-case classification (labels only).

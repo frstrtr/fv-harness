@@ -140,5 +140,7 @@ def TestOneInput(data: bytes) -> None:
 
 
 if __name__ == "__main__":
+    if os.environ.get("FV_SELF"):  # the corpus merge re-executes argv[0]: make it the run's wrapper
+        sys.argv[0] = os.environ["FV_SELF"]
     atheris.Setup(sys.argv, TestOneInput)
     atheris.Fuzz()

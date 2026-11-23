@@ -26,6 +26,11 @@ The pipeline:
   `limits` and, for EVM, `evm`. Readers of v0.2.0 closures: `cpp_impl` there means what
   `impl.files` means here.
 - `tests/lang_rehearsal.sh` runs every language through the whole state machine on the examples.
+- **Known issue in v0.2.0, fixed in v0.2.1:** with `--lang python` the corpus merge did not run
+  (libFuzzer re-executes `argv[0]` for the merge, and the Python driver is not executable on its own);
+  verdicts were unaffected (the campaign decides in-process, before the merge), but the persisted corpus
+  did not grow. The merge now re-executes the run's wrapper, and a merge that did not run is ERROR, for
+  every language (control c52).
 
 ## Start here
 

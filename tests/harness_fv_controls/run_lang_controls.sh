@@ -13,6 +13,8 @@
 #   c19_rust_profile_off  overflow-checks = false in the project's Cargo.toml, or in a
 #                      .cargo/config.toml cargo would read, is ERROR before any build
 #   c21_py_clean       correct Python implementation (Atheris), 10^6 runs: PASS
+#   c52_py_merge       the corpus merge on the Python loop really runs: a campaign that adds units grows the
+#                      persisted corpus (copied), and the merge log reports success
 #   c22_py_drift       a reduction one unit short: FAIL "oracle/implementation mismatch" within 10 s
 #   c23_py_wide        a fill adds 2^64 (a bug that reduction mod 2^64 would hide): FAIL "domain: ..."
 #   c24_py_vendored_tamper  (a) a vendored copy of the harness driver fv_diff.py passes untampered and,
@@ -51,7 +53,7 @@ lang_campaign() { # lang_campaign ID LANG DIR IMPL ARGS...
   cp -r "$LEAN" "$OUT/$id/lean"; rm -rf "$OUT/$id/lean/.lake"
   cp -r "$dir/fuzz/corpus" "$OUT/$id/corpus"
   "$ROOT/fuzz/run_fuzz.sh" --lang "$lang" --lean-project "$OUT/$id/lean" --lock "$LOCK" --cmake-dir "$dir/fuzz" \
-    --target diff_risk --impl-dir "$dir/$impl" --corpus "$OUT/$id/corpus" --no-merge --out "$OUT/$id/run" "$@" \
+    --target diff_risk --impl-dir "$dir/$impl" --corpus "$OUT/$id/corpus" $([ "${LANG_MERGE:-0}" = 1 ] || echo --no-merge) --out "$OUT/$id/run" "$@" \
     > "$OUT/$id/run_fuzz.out" 2>&1
 }
 
@@ -147,8 +149,16 @@ fi  # rust
 P="$ROOT/examples/risk-limit-py"; PY="${FV_PY:-$FV_ROOT/py/venv/bin/python}"
 if ! only python; then :
 elif ! { [ -x "$PY" ] && "$PY" -I -c 'import atheris' 2>/dev/null; }; then
-  absent python "$PY" c21_py_clean c22_py_drift c23_py_wide c24_py_vendored_tamper
+  absent python "$PY" c21_py_clean c22_py_drift c23_py_wide c24_py_vendored_tamper c52_py_merge
 else
+LANG_MERGE=1 lang_campaign c52_py_merge python "$P" impl --runs 20000
+rc=$?; j="$OUT/c52_py_merge/run/fuzz.json"; m52="$OUT/c52_py_merge/run/merge.log"
+n52a=$(ls "$P/fuzz/corpus" | wc -l); n52b=$(ls "$OUT/c52_py_merge/corpus" | wc -l); nu52=$(jq -r .stats "$j" 2>/dev/null | grep -oE 'new_units_added: *[0-9]+' | grep -oE '[0-9]+$')
+if [ $rc -eq 0 ] && grep -q '^MERGE-OUTER: successful in' "$m52" && [ "${nu52:-0}" -gt 0 ] && [ "$n52b" -gt "$n52a" ]; then
+  echo "c52_py_merge OK merge ran ($(grep -m1 -oE 'successful in [0-9]+ attempt\(s\)' "$m52")): $nu52 new units, corpus $n52a -> $n52b"
+else
+  echo "c52_py_merge WRONG exit=$rc new_units=${nu52:-?} corpus $n52a -> $n52b merge: $(grep -m1 -E 'successful|Permission denied|did not run' "$m52" 2>/dev/null | cut -c1-100) [$(jq -r .detail "$j" 2>/dev/null)]"; fails=1
+fi
 lang_campaign c21_py_clean python "$P" impl --runs 1000000
 rc=$?; j="$OUT/c21_py_clean/run/fuzz.json"
 if [ $rc -eq 0 ] && [ "$(jq -r .verdict "$j")" = PASS ]; then
