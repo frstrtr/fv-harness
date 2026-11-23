@@ -1,8 +1,9 @@
 # What the harness found on first use
 
-These are anonymised findings from the harness's first runs: on its own fixture, on the tools it
-builds on, and on its first production specification. They contain no project, product, file,
-function or repository names. Every number comes from a logged run.
+Sections 1 to 7 are anonymised findings from the harness's first runs: on its own fixture, on the
+tools it builds on, and on its first production specification. They contain no project, product,
+file, function or repository names. Section 8 is a named case, published after its public disclosure.
+Every number comes from a logged run.
 
 ## 1. A one-unit rounding drift, caught in 22 ms
 
@@ -176,3 +177,13 @@ The open quantity became `2^64 − 1`. The correct C++ survived 10^6 runs.
 inputs no one writes a test for. A proof about exact arithmetic does not see it. A width statement
 says which C++ computation is safe, and boundary-favouring differential fuzzing checks that the
 code actually computes it that way.
+
+## 8. Named: a signed overflow in Dash Core's superblock payment total, found by reading
+
+Mapping Dash Core's functions to the statements of a verified model of Dash payout rules found an
+unchecked signed sum over a governance trigger's payments: 4,393 maximum amounts overflow it. It was
+found by **reading the upstream code**, not by the fuzzer, because the fuzzer took the schedule as given
+and restated the acceptance check instead of calling it. The Dash Core developers confirmed it and
+opened a fix. The full case study, with the confirmation, the severity and what the harness takes from
+it (a coverage line in every review note, and a mapping step that reads upstream code), is in
+[CASE-STUDY-SUPERBLOCK-SUM.md](CASE-STUDY-SUPERBLOCK-SUM.md).
