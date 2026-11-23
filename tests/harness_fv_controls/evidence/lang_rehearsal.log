@@ -6,3 +6,5 @@ OK    python: CLOSED, closure fuzz.lang python, impl 1 file(s) from impl
 OK    python: drift (impl-drift) -> CPP_BUGFIX: oracle/implementation mismatch
 OK    evm: CLOSED, closure fuzz.lang evm, impl 1 file(s) from contract, evm pins recorded
 OK    evm: drift (contract-drift) -> CPP_BUGFIX: oracle/implementation mismatch
+OK    tron-tvm: CLOSED, closure fuzz.lang tron-tvm, impl 1 file(s) from contract, tron-tvm pins recorded
+OK    tron-tvm: drift (contract-drift) -> CPP_BUGFIX: regression replay failed on the persisted corpus: oracle/implementation mismatch

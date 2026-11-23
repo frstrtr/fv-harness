@@ -1,3 +1,4 @@
+OK    content tree equals the commit's tree before any change (3e35b92cdcc1)
 OK    spec-lock: exit 0, state DECOMPOSE
 OK    decompose-1: exit 0, state DISCHARGE
 OK    discharge-same-failure-wall: exit 10, state DECOMPOSE
@@ -10,6 +11,10 @@ OK    decompose-3: exit 0, state DISCHARGE
 OK    run-to-close: exit 0, state CLOSED
 OK    closure bundle present
 OK    closure records the Tier-2 escalation counters
+OK    closure names the closed tree (d6967250ef9f), its content tree (348bf5ae5b0f, differs: Solution.lean written after the commit) and the harness commit (4fa1a7f)
+OK    harness record: clean deployment = clean; a changed file = DIRTY (fuzz/run_fuzz.sh); an added file = deployment data
+OK    git: the project's .lake is excluded (["p/.lake"]), a source build/ directory is not (content changes with it)
+OK    archive: the project's .lake is excluded (["p/.lake"]), a source build/ directory is not (content changes with it)
 OK    illegal-transition: exit 3, state CLOSED
 OK    spec-lock: exit 0, state DECOMPOSE
 OK    tamper-blocked: exit 11, state BLOCKED
