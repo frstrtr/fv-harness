@@ -27,14 +27,15 @@ c16_rust_drift         OK     FAIL after .232134849 s (limit 10 s); ev/controls/
 c17_rust_overflow      OK     panic: (1965024) panicked at <harness>/examples/risk-limit-rust/impl-overflow/lib.rs:18:16: attempt to add with overflow  (after .2140 s)
 c18_rust_vendored_tamper OK     untampered vendored driver passes; tampered: FAIL before build (vendored harness file differs from the harness copy at its cited commit: fv_diff.rs (commit v0.2.0) ); own fuzz_target!: ERROR (the Rust fuzz target must end with fv_diff_main!(...) and define no fuzz_target! of its ow)
 c19_rust_profile_off   OK     overflow-checks = false in Cargo.toml and in .cargo/config.toml each refused: ERROR before build
-c21_py_clean           OK     runs=1000000 seconds=114.92 stat::number_of_executed_units: 1000000 stat::average_exec_per_sec:     8771 stat::new_units_added:          116
-c22_py_drift           OK     FAIL after .275129449 s (limit 10 s)
-c23_py_wide            OK     domain: at step 0 (pos = 18446744073709551618 is outside [0, 2^64))
-c24_py_vendored_tamper OK     untampered vendored driver passes; tampered: FAIL before build (vendored harness file differs from the harness copy at its cited commit: fv_diff.py (commit v0.2.0) ); own TestOneInput: ERROR
+c21_py_clean           OK     runs=1000000 seconds=98.694 stat::number_of_executed_units: 1000000 stat::average_exec_per_sec:     10204 stat::new_units_added:          84 
+c22_py_drift           OK     FAIL after .217908530 s (limit 10 s)
+c23_py_wide            OK     domain: at step 0 (pos = 18446744073709551616 is outside [0, 2^64))
+c24_py_vendored_tamper OK     untampered vendored driver passes; tampered: FAIL before build (vendored harness file differs from the harness copy at its cited commit: fv_diff.py (commit e1f3631) ); own TestOneInput: ERROR
+c52_py_merge           OK     merge ran (successful in 1 attempt(s)): 55 new units, corpus 0 -> 35
 c25_evm_clean          OK     runs=1000000 seconds=2016.2 runtime=919af9e57652 (pinned) solc=b8b0642d4683 classes=5 not_exercised=0 stat::number_of_executed_units: 1000000 stat::average_exec_per_sec:     496 stat::new_units_added:          450
 c26_evm_drift          OK     FAIL after 4475 executions, 4.063546686 s (limits 50,000 executions, 60 s)
 c27_evm_overflow       OK     checked: FAIL, the contract panic 0x11 where the model rejects; unchecked: FAIL (op     submit(uint64) q=18446744073709551613)
 c28_evm_vendored_tamper OK     untampered vendored EVM passes; tampered: FAIL before build (vendored harness file differs from the harness copy at its cited commit: fv_evm.rs (commit v0.2.0) ); own fuzz_target!: ERROR
 c29_evm_pins           OK     other solc: ERROR before compiling; runtime bytecode not the expected one: BLOCKED before any fuzzer build
-c20_required_lang      OK     required (rust, python, evm) + no toolchains: 14 WRONG (exit 1); not required: 14 SKIP (exit 0)
+c20_required_lang      OK     required (rust, python, evm) + no toolchains: 15 WRONG (exit 1); not required: 15 SKIP (exit 0)
 c31_hosts_env          OK     file only: [0-1 3]; exported FV_CPUSET=0: [0 3] (environment wins); unexported assignment: [0-1 3] (not seen)
