@@ -35,7 +35,7 @@ The pipeline:
   The merge re-runs every input in a fresh process; when one failed there (an implementation whose
   behaviour depends on process state or order), libFuzzer retried without that input and reported
   success. Now a finding during the merge is FAIL with its reproducer kept, an inner merge process that
-  died without a finding is ERROR, and a merge must complete in one attempt (controls c53, c54).
+  died without a finding is ERROR, and a merge must complete in one attempt (controls c53, c54, c59).
   The input libFuzzer skipped was not added to the corpus either, so later replays did not see it.
 
 ## Start here

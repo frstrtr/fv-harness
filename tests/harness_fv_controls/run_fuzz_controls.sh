@@ -38,6 +38,8 @@
 #                 the reproducer kept in the corpus. This control runs WITH the merge, into a copy.
 #   c54_merge_inner_exit  the inner merge process exits 1 on odd amounts (no finding): ERROR (exit 3),
 #                 never PASS.
+#   c59_merge_inner_start  the inner merge process exits at start, before any input (no input to blame;
+#                 libFuzzer exits 0 having merged nothing): ERROR "did not complete in one attempt".
 #   c30_draft_not_countable  a draft (an UNSIGNED spec_lock.sh manifest) can be validated with
 #                 run_fuzz.sh --draft but never counts: (a) the --draft run is stamped "DRAFT (unsigned, not
 #                 countable)" first in fuzz.log and fuzz.json, its verdict reads "DRAFT PASS", and the
@@ -281,5 +283,12 @@ if [ $rc -eq 3 ] && [ "$(jq -r .verdict "$j")" = ERROR ] && jq -r .detail "$j" |
   echo "c54_merge_inner_exit OK ERROR: $(jq -r .detail "$j" | cut -c1-120)"
 else
   echo "c54_merge_inner_exit WRONG exit=$rc $(jq -c '{verdict,detail}' "$j" 2>/dev/null | cut -c1-300)"; fails=1
+fi
+merged c59_merge_inner_start "$ROOT/tests/harness_fv_controls/variants/c59_merge_start"
+rc=$?; j="$OUT/c59_merge_inner_start/run/fuzz.json"
+if [ $rc -eq 3 ] && [ "$(jq -r .verdict "$j")" = ERROR ] && jq -r .detail "$j" | grep -q 'corpus merge did not complete in one attempt'; then
+  echo "c59_merge_inner_start OK ERROR: $(jq -r .detail "$j" | cut -c1-120)"
+else
+  echo "c59_merge_inner_start WRONG exit=$rc $(jq -c '{verdict,detail}' "$j" 2>/dev/null | cut -c1-300)"; fails=1
 fi
 exit $fails

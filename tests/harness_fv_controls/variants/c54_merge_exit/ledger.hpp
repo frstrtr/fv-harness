@@ -1,6 +1,9 @@
 // Production implementation of the ledger transfer (the code under differential test).
 #pragma once
 #include <cstdint>
+#include <unistd.h>
+#include <cstdio>
+#include <cstring>
 
 namespace ledger {
 
@@ -15,9 +18,6 @@ struct Ledger {
 // CONTROL 54: correct everywhere, but inside libFuzzer's corpus-merge inner process (-merge_inner=1) the
 // process exits 1 on an odd amount: an inner merge process that dies without a finding. libFuzzer
 // retries without that input; the run must end ERROR, never PASS.
-#include <unistd.h>
-#include <cstdio>
-#include <cstring>
 inline bool fv_c53_in_merge() {
   static int v = -1;
   if (v < 0) {

@@ -1,6 +1,8 @@
 // Production implementation of the ledger transfer (the code under differential test).
 #pragma once
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
 
 namespace ledger {
 
@@ -15,8 +17,6 @@ struct Ledger {
 // CONTROL 53: correct everywhere except inside libFuzzer's corpus-merge inner process (-merge_inner=1),
 // where the fee is one unit too high whenever x is odd. A campaign and its replay never see it; only the
 // merge step does, which must make the run FAIL, never PASS.
-#include <cstdio>
-#include <cstring>
 inline bool fv_c53_in_merge() {
   static int v = -1;
   if (v < 0) {
