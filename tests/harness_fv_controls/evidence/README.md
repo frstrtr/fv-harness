@@ -3,15 +3,42 @@
 `summary.txt` holds the one-line verdict of each acceptance control, `rehearsal.log` the task
 state-machine rehearsal, and `lang_rehearsal.log` the state machine run end to end for every
 implementation language. They come from `tests/harness_fv_controls/run_controls.sh`,
-`tests/state_machine_rehearsal.sh` and `tests/lang_rehearsal.sh`, run once on the release head
-(dd87da9), on one gate host (Ubuntu, 4 cores reserved), with `FV_REQUIRE_LANGS="rust python evm"`,
-so every language control ran and none could SKIP.
+`tests/state_machine_rehearsal.sh` and `tests/lang_rehearsal.sh`, run once on the v0.3.0 release head
+(4fa1a7f), on one gate host (Ubuntu, 4 cores reserved), with
+`FV_REQUIRE_LANGS="rust python evm tron-tvm"`, so every language control ran and none could SKIP.
 
-Result: 44 controls, 0 misbehaved, 0 skipped; the rehearsal passed every step; every language (cpp,
-rust, python, evm) reached CLOSED with the closure naming its language and implementation, and its drift
-implementation reached CPP_BUGFIX.
+Result: 71 controls, 0 misbehaved, 0 skipped. The rehearsal passed every step. Every language (cpp,
+rust, python, evm, tron-tvm) reached CLOSED, with the closure naming its language and implementation,
+and its drift implementation reached CPP_BUGFIX.
 
-## What changed on this line since v0.2.0, and the controls for it
+## Controls added in v0.3.0
+
+Each drives the gate or the fuzzer with a deliberately broken input (a variant implementation, a
+tampered file or bundle, a fake reading) and requires the verdict that input calls for:
+- **TRON-TVM:**
+  - c33–c37: known answers, a clean contract, drift, refusals, vendored copies;
+  - c41: contract coverage;
+  - c49: internal transactions;
+  - c51: guidance from the binding;
+  - c56: the profile read-back;
+  - c57: the build pins;
+  - c64: the run record and CLOSE.
+- **Multi-worker campaigns:**
+  - c38, c39: one failing worker among several;
+  - c40: the shared-host guards;
+  - c42: CMake arguments;
+  - c43: the batch merge rules;
+  - c44: bundle strictness;
+  - c45: a pause longer than the per-input timeout;
+  - c46, c58: the ssh transport, and two runs with the same name;
+  - c47, c60: run names, and `--runs` / `--time`;
+  - c61: the copy-back;
+  - c62: slow units with several workers;
+  - c63: one gate per run directory.
+- **The ByteArray oracle ABI:** c50, and c55 for its errors through `run_fuzz.sh`.
+- **Gate:** c48, the fuzz.json record; c53, c54 and c59, the corpus merge (as in v0.2.1).
+
+## v0.2.1: what changed on that line since v0.2.0, and the controls for it
 
 - **The Python corpus merge** did not run (libFuzzer re-executes `argv[0]`, which the Python driver is
   not): fixed, and a merge that did not run is ERROR (c52). Red without the fix: the same Python merge

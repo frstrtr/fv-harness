@@ -14,13 +14,23 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 dir="${1:?usage: $0 FUZZ_DIR}"
 out="{}"; rc=0
-for name in LeanOracle.cmake diff_oracle_template.cpp fv_classify.hpp fv_diff.rs fv_diff.py fv_evm.rs; do
+# The TRON-TVM pack's file names before the rename: a copy under an old name would not be the one the
+# build uses, and checking it against nothing would pass silently. Refused.
+for old in fv_tvm.py FvTvmDriver.java; do
+  if [ -e "$dir/$old" ] || [ -L "$dir/$old" ]; then
+    out=$(jq -c --arg n "$old" '. + {($n): {match: false, reason: "old name before the TRON-TVM rename (now fv_tron_tvm.py / FvTronTvmDriver.java)"}}' <<< "$out"); rc=1
+  fi
+done
+for name in LeanOracle.cmake diff_oracle_template.cpp fv_classify.hpp fv_diff.rs fv_diff.py fv_oracle_bytes.py fv_evm.rs fv_tron_tvm.py FvTronTvmDriver.java; do
   f="$dir/$name"
   [ -e "$f" ] || [ -L "$f" ] || continue
   src="$HERE/$name"
   [ "$name" = fv_diff.rs ] && src="$HERE/rust/fv_diff.rs"    # the Rust driver
   [ "$name" = fv_diff.py ] && src="$HERE/python/fv_diff.py"  # the Python driver
+  [ "$name" = fv_oracle_bytes.py ] && src="$HERE/python/fv_oracle_bytes.py"  # its ByteArray oracle ABI
   [ "$name" = fv_evm.rs ] && src="$HERE/evm/fv_evm.rs"        # the EVM executor
+  [ "$name" = fv_tron_tvm.py ] && src="$HERE/tron-tvm/fv_tron_tvm.py"        # the TRON-TVM client
+  [ "$name" = FvTronTvmDriver.java ] && src="$HERE/tron-tvm/FvTronTvmDriver.java"  # the TRON-TVM reference driver
   first=$(head -1 "$src")
   n=""; commit=""; body=""; pinned=""; hdr_ok=0
   if [ -f "$f" ] && [ ! -L "$f" ]; then

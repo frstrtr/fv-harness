@@ -28,16 +28,59 @@ The pipeline:
   together with runs of the newer controls against the code before their fix, where they fail.
 - **Drafts.** `fuzz/run_fuzz.sh --draft` exercises an unsigned specification. Its results are stamped
   as drafts and never count toward a closure.
-- **Languages.** Shipped: C++ (and C), Rust, Python, and Solidity contracts on an in-process EVM
-  (`examples/risk-limit`, `examples/risk-limit-rust`, `examples/risk-limit-py`,
-  `examples/risk-limit-evm`). Planned: contracts on the TRON Virtual Machine (TVM) in the next release,
-  then Go, Java/Kotlin and JavaScript/TypeScript. See `docs/LANGUAGES.md`.
+- **Languages.** Shipped: C++ (and C), Rust, Python, Solidity contracts on an in-process EVM, and
+  contracts on the TRON Virtual Machine (TVM) against a reference executor (`examples/risk-limit`,
+  `examples/risk-limit-rust`, `examples/risk-limit-py`, `examples/risk-limit-evm`,
+  `examples/token-faucet-tron-tvm`). Planned: Go, Java/Kotlin and JavaScript/TypeScript. See
+  `docs/LANGUAGES.md`.
 - **On first use.** While mapping an upstream project's functions to the statements of a
   specification, we found a signed overflow in Dash Core's superblock payment total, by reading the
   code during that mapping, not with the fuzzer. The Dash Core developers confirmed it and opened a fix
   (`docs/CASE-STUDY-SUPERBLOCK-SUM.md`). The other case studies are anonymised and come from the
   harness's first runs: on its own fixture, on the tools it builds on, and on its first production
   specification (`docs/CASE-STUDIES.md`).
+
+## Changes in v0.3.0
+
+- **Contracts on the TRON Virtual Machine (TVM): `--lang tron-tvm`.** The contract under test runs on
+  java-tron's own TRON-TVM, built from source at a pinned release and run offline, with the mainnet
+  chain parameters applied through java-tron's own proposal code and read back. The inputs come from
+  the same Python loop as `--lang python`, through a reviewed binding.
+  - Every implementation step must send a transaction to the reference.
+  - The executed build is pinned: the java-tron commit, the classpath manifest, the JDK tree and the
+    node config, with the reference host's values in `config/pins.env`. Another host's build must
+    reproduce them or carry its own reviewed values.
+  - Only an oracle/contract difference is a finding. Executor failures, timeouts and binding exceptions
+    are ERROR, and their input is never kept.
+  - Internal transactions are compared as an ordered list.
+  - Details: `docs/TRON-TVM-REFERENCE.md`. Example: `examples/token-faucet-tron-tvm`.
+- **Multi-worker campaigns.**
+  - `--jobs N` runs N local workers. `--remote local:K` or `ssh:NAME:K` adds K workers that run from a
+    hash-pinned bundle, built on the gate.
+  - Over ssh: one ControlMaster per campaign, each worker in its own systemd scope with CPU and memory
+    caps, and optional shared-host guards that pause the campaign.
+  - `fuzz/worker/merge.py` turns every batch into one verdict. Executions are counted after the corpus
+    replay, and a failure line in any batch is a FAIL.
+  - The gate unpacks what a worker sends back itself. It holds one lock per run directory, and a run
+    never removes another run's files.
+  - Worker hosts never compile anything. The bundle records the glibc and libstdc++ symbol versions it
+    needs, and a worker with an older system refuses it (BLOCKED).
+- **The ByteArray oracle ABI.** `lean_oracle_shared(... BYTES fn)` wraps a Lean `ByteArray → ByteArray`
+  export, and `fuzz/python/fv_oracle_bytes.py` calls it from Python. A result whose length differs from
+  the declared one is ERROR.
+- **The closure names what it closed:** the closed tree, the content tree the run used, and the harness
+  deployment (`scripts/deploy_manifest.sh`: clean, DIRTY, or extra files).
+- **Gate fixes since v0.2.1:**
+  - a slow but correct input is never counted as a failure, including in a multi-worker run;
+  - for `--lang tron-tvm`, a run record without the reference's identity is ERROR, and CLOSE refuses it;
+  - `--runs` and `--time` must be positive and below 2^31.
+- **The control suite** requires a verdict line from every control. Every control that searches for a
+  failure runs on an execution budget, not on time. The evidence of one full run on a gate host with
+  every toolchain is in `tests/harness_fv_controls/evidence/`.
+- **Upgrading from v0.2.x.**
+  - Vendored copies cite `v0.3.0` (`fuzz/VENDORED.sha256`); lines for earlier releases stay valid.
+  - `--lang tron-tvm` needs the reference build (`docs/TRON-TVM-REFERENCE.md`).
+  - Nothing else changes for existing C++, Rust, Python or EVM projects.
 
 ## Changes in v0.2.1
 
@@ -76,9 +119,9 @@ The pipeline:
 - `docs/CASE-STUDIES.md`: what it found on first use.
 - `examples/risk-limit/`: a pre-trade risk check, with a correct and an overflow-buggy C++ variant.
 - `docs/HARDWARE.md`: machine profiles (minimum and recommended) and the prover models by GPU class. No GPU is needed for the gate.
-- `docs/LANGUAGES.md`: languages beyond C++. Rust, Python and Solidity/EVM are shipped
-  (`examples/risk-limit-rust`, `examples/risk-limit-py`, `examples/risk-limit-evm`); Go, Java/Kotlin
-  and JS are planned. It also covers how each binds to the oracle.
+- `docs/LANGUAGES.md`: languages beyond C++. Rust, Python, Solidity/EVM and TRON-TVM contracts are
+  shipped (`examples/risk-limit-rust`, `examples/risk-limit-py`, `examples/risk-limit-evm`,
+  `examples/token-faucet-tron-tvm`); Go, Java/Kotlin and JS are planned. It also covers how each binds to the oracle.
 
 Licence: Apache-2.0 (`LICENSE`, `NOTICE`). Third-party tools and models are referenced, not
 vendored (`THIRD-PARTY.md`). Commit ids cited in reports refer to the development history from
@@ -105,13 +148,18 @@ before this repository's single root commit.
 | `fuzz/diff_oracle_template.cpp` | Reusable differential fuzzer (Module 5) |
 | `fuzz/LeanOracle.cmake` | `lean_oracle_library()` and `add_diff_fuzzer()` CMake functions |
 | `fuzz/run_fuzz.sh` | COUPLE stage: lock check, oracle build, corpus replay, campaign, corpus merge |
-| `tests/harness_fv_controls/` | Acceptance controls (spec §4) and a neutral summary of a clean run (`evidence/`). Hosted CI runs the gate and C++ controls; the language controls (c15–c29) SKIP there and are verified on a gate host, not in CI (`docs/LANGUAGES.md`) |
+| `fuzz/worker/` | Multi-worker campaigns: the worker runner, shared-host guards, batch merge rules, the copy-back check |
+| `fuzz/tron-tvm/` | The TRON-TVM reference executor: java-tron driver, Python client, contract coverage, chain-parameter profiles |
+| `examples/token-faucet-tron-tvm/` | A capped TRC-10 faucet contract on the TRON-TVM reference, with drift control |
+| `scripts/deploy_manifest.sh` | Records a deployment's commit and file manifest, so a closure can name the harness it ran on |
+| `tests/harness_fv_controls/` | Acceptance controls (spec §4) and a neutral summary of a clean run (`evidence/`). Hosted CI runs the gate and C++ controls; the language controls (Rust, Python, EVM and TRON-TVM) SKIP there and are verified on a gate host, not in CI (`docs/LANGUAGES.md`) |
 | `scripts/lean_lsp_mcp.sh`, `scripts/preflight_lake_build.sh` | Module 1: sandboxed lean-lsp MCP server; pre-flight build |
 | `prover/` | Module 3: Tier-2 endpoint (`tier2_server.sh`) and `dispatch_local_prover` (`dispatch.sh`) |
 | `config/tier2.env` | Tier-2 endpoint and server settings (the endpoint is config only) |
 | `agent-config/` | MCP registration, synthesis policy, settings template with the pre-flight hook |
 | `docs/DESIGN-NOTES.md` | Early-wall escalation rule, CI fingerprint literal, fixture corpus, Mathlib deferral |
-| `docs/USAGE.md`, `docs/APPLICATIONS.md`, `docs/CASE-STUDIES.md` | Walk-through, domains, first-use findings |
+| `docs/USAGE.md`, `docs/APPLICATIONS.md`, `docs/CASE-STUDIES.md` | Walk-through, domains, first-use findings (one named case: `docs/CASE-STUDY-SUPERBLOCK-SUM.md`) |
+| `docs/LANGUAGES.md`, `docs/TRON-TVM-REFERENCE.md` | Languages beyond C++; the TRON-TVM reference executor |
 | `docs/DRY-RUN-REPORT-FV-01.md` | The first end-to-end run on the fixture |
 | `prover/remote/`, `prover/relay/` | Remote GPU instances of the Tier-2 `main` stage; loopback relay |
 | `tests/*/evidence/` | Neutral summaries of the dry run, the control suite and the rehearsal |

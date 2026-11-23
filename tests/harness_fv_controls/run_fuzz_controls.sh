@@ -28,9 +28,33 @@
 #                 ERROR before any build; max_len = 300 with len_control = 0 reaches the campaign
 #                 (libFuzzer status lines show "lim: 300") and is recorded in fuzz.json .limits, while a
 #                 run without them (c1) records null.
+#   c38_jobs        --jobs 4: (a) the correct implementation, 40,000 executions in total: PASS, fuzz.json
+#                 counts the sum of the 4 workers' executed units; (b) an implementation that drifts only
+#                 in worker 2 (FV_FUZZ_WORKER=2): FAIL naming worker 2, the other workers passing.
+#   c39_remote_bundle  workers from a hash-pinned bundle (--remote local:K): (a) correct implementation,
+#                 1 local + 2 bundle workers: PASS, total executions include the bundle workers, fuzz.json
+#                 records the bundle sha256 and the worker's glibc / libstdc++; (b) a drift only in bundle
+#                 worker 2: FAIL naming it; (c) the worker runner refuses a bundle with a changed file
+#                 (BLOCKED, exit 2); (d) a bundle that is not this run's build (changed file, re-made
+#                 manifest): the gate refuses it before any worker starts, BLOCKED.
+#   c40_guards     the shared-host guards (fuzz/worker/fv_guard.sh), driven by fake readings on this host:
+#                 the start gate (NTP, unparsable or stale head); a stale head, failing endpoint, NTP lost,
+#                 busy or vanished inference, low memory and high load each END the running batch and,
+#                 once cleared, a new batch starts; no RESUME while a reading is still bad; a decoy
+#                 "java" is never stopped (tests/harness_fv_controls/c40_guards.sh, on the c39 bundle).
+#   c43_merge .. c47_run_name  batch verdicts, bundle strictness, a pause longer than the timeout, the
+#                 ssh transport against a test-only localhost sshd, run names
+#                 (tests/harness_fv_controls/multihost_controls.sh, on the c39 bundle).
+#   c42_cmake_args  extra project CMake definitions: a non -D argument, one with whitespace and one that
+#                 names a harness-owned variable (CMAKE_CXX_FLAGS) are each ERROR before any build; a
+#                 site default (FV_CMAKE_ARGS) plus a command-line -D reach the build and are recorded in
+#                 fuzz.json with their source and the sha256 of the path they name.
 #   c48_record_failure  the fuzz.json record is part of the verdict: with the writer's jq failing, a run
 #                 that would PASS and one that would FAIL each end ERROR (exit 3), never 0 or 1
 #                 (tests/harness_fv_controls/c48_record_failure.sh).
+#   c50_bytes_abi  the ByteArray oracle ABI (LeanOracle.cmake BYTES): no memory growth over 2 x 100,000
+#                 calls, one reference consumed, a wrong length is ERROR, no change without BYTES; with red
+#                 wrappers for a leak and a double release (tests/harness_fv_controls/c50_bytes_abi.sh).
 #   c53_merge_failure  an implementation that is wrong only inside libFuzzer's corpus-merge inner
 #                 process (-merge_inner=1; fee one unit high on odd amounts): the campaign and replay pass,
 #                 the merge meets the mismatch; libFuzzer alone would retry without it and report success.
@@ -38,6 +62,11 @@
 #                 the reproducer kept in the corpus. This control runs WITH the merge, into a copy.
 #   c54_merge_inner_exit  the inner merge process exits 1 on odd amounts (no finding): ERROR (exit 3),
 #                 never PASS.
+#   c62_slow_units_jobs  --jobs 2 with an implementation that is correct but slow on its first input in each
+#                 process: PASS, the workers' slow units (w<w>-slow-unit-*) recorded in fuzz.json slow_units,
+#                 never counted as failing artifacts.
+#   c63_out_lock   a second run on an --out another run is using is refused at once (ERROR, "another run
+#                 holds"), and the first run's verdict and record are intact.
 #   c59_merge_inner_start  the inner merge process exits at start, before any input (no input to blame;
 #                 libFuzzer exits 0 having merged nothing): ERROR "did not complete in one attempt".
 #   c30_draft_not_countable  a draft (an UNSIGNED spec_lock.sh manifest) can be validated with
@@ -256,8 +285,85 @@ if [ -z "$bad32" ] && [ $src -eq 0 ] && jq -e '.verdict == "PASS" and .limits.ma
 else
   echo "c32_len_limits WRONG refused-bad=[${bad32:-ok}] set: exit=$src $(jq -c '{verdict, limits}' "$j32" 2>/dev/null) c1: $(jq -c '.limits | {max_len, len_control}' "$OUT/c1_fuzz/run/fuzz.json" 2>/dev/null)"; fails=1
 fi
+
+campaign c38_jobs_clean --jobs 4 --runs 40000
+rca=$?; ja="$OUT/c38_jobs_clean/run/fuzz.json"
+campaign c38_jobs_one --jobs 4 --time 30 --impl-dir "$ROOT/tests/harness_fv_controls/variants/c38_one_worker"
+rcb=$?; jb="$OUT/c38_jobs_one/run/fuzz.json"
+if [ $rca -eq 0 ] && jq -e '.verdict == "PASS" and .jobs == 4 and (.workers | length) == 4 and ([.workers[].executions] | all(. != null))
+     and .total_executions == ([.workers[].executions] | add) and .total_executions >= 40000' "$ja" > /dev/null \
+   && [ $rcb -eq 1 ] && jq -e '(.detail | contains("oracle/implementation mismatch") and contains("worker 2 of 4"))
+     and ([.workers[] | select(any(.batches[]; .exit != 0)) | .worker] == [2])' "$jb" > /dev/null; then
+  echo "c38_jobs OK 4 workers, $(jq -r .total_executions "$ja") executions in total ($(jq -r '[.workers[].executions] | map(tostring) | join("+")' "$ja")): PASS; drift only in worker 2: $(jq -r .detail "$jb"), workers 0,1,3 exit 0"
+else
+  echo "c38_jobs WRONG clean exit=$rca $(jq -c '{verdict, total_executions, workers}' "$ja" 2>/dev/null) one-worker exit=$rcb $(jq -c '{verdict, detail, failed: [.workers[]? | select(any(.batches[]; .exit != 0)) | .worker]}' "$jb" 2>/dev/null)"; fails=1
+fi
+
+X39="${OUT:?}/c39"; mkdir -p "$X39"
+campaign c39_remote_clean --jobs 1 --remote local:2 --runs 30000 --bundle-out "$X39/bundle.tar"
+rca=$?; ja="$OUT/c39_remote_clean/run/fuzz.json"
+campaign c39_remote_one --jobs 1 --remote local:2 --time 30 --impl-dir "$ROOT/tests/harness_fv_controls/variants/c39_remote_worker"
+rcb=$?; jb="$OUT/c39_remote_one/run/fuzz.json"
+T1="$X39/t1"; mkdir -p "$T1"; tar -xf "$X39/bundle.tar" -C "$T1"; printf 'x' >> "$(ls "$T1"/bundle/corpus/* | head -1)"
+bash "$T1/bundle/fv_worker.sh" "$T1/bundle" 0 1 100 "" 1 > "$X39/worker-tampered.out" 2>&1; rcc=$?
+rm -rf "${T1:?}/bundle/out"  # the refused run's own output is not part of a bundle
+(cd "$T1/bundle" && find . -type f ! -name MANIFEST.sha256 -printf '%P\n' | LC_ALL=C sort | xargs sha256sum > MANIFEST.sha256)
+tar -cf "$X39/remanifested.tar" -C "$T1" bundle
+campaign c39_remote_remanifested --jobs 1 --remote local:2 --runs 3000 --bundle "$X39/remanifested.tar"
+rcd=$?; jd="$OUT/c39_remote_remanifested/run/fuzz.json"
+if [ $rca -eq 0 ] && jq -e '.verdict == "PASS" and (.workers | length) == 3 and ([.workers[] | select(.remote == true)] | length) == 2
+     and .total_executions == ([.workers[].executions] | add) and .total_executions >= 30000
+     and (.remote.bundle_sha256 | length) == 64 and .remote.bundle_sha256 == .remote.built_sha256
+     and (.remote.worker_env.glibc | length) > 0 and (.remote.worker_env.libstdcxx_sha256 | length) == 64' "$ja" > /dev/null \
+   && [ $rcb -eq 1 ] && jq -e '.detail | contains("worker 2 of 3, remote")' "$jb" > /dev/null \
+   && [ $rcc -eq 2 ] && grep -q '^BLOCKED: bundle files differ from MANIFEST.sha256' "$X39/worker-tampered.out" \
+   && [ ! -s "$T1/bundle/out/pids" ] \
+   && [ $rcd -eq 2 ] && jq -e '.verdict == "BLOCKED" and (.detail | contains("not this build"))' "$jd" > /dev/null \
+   && [ ! -e "$OUT/c39_remote_remanifested/run/remote-local/bundle/out/pids" ]; then
+  echo "c39_remote_bundle OK 1+2 workers: PASS, $(jq -r .total_executions "$ja") executions, bundle $(jq -r '.remote.bundle_sha256[0:12]' "$ja"), worker glibc $(jq -r .remote.worker_env.glibc "$ja") libstdc++ $(jq -r '.remote.worker_env.glibcxx_max' "$ja"); drift in bundle worker 2: FAIL; changed bundle file: the worker refuses it (BLOCKED, nothing started); a bundle not of this build: the gate refuses it before any worker"
+else
+  echo "c39_remote_bundle WRONG clean=$rca [$(jq -c '{verdict, detail, total_executions, remote: (.remote | {bundle_sha256, built_sha256})}' "$ja" 2>/dev/null)] one=$rcb [$(jq -r .detail "$jb" 2>/dev/null)] tampered=$rcc [$(head -1 "$X39/worker-tampered.out")] remanifested=$rcd [$(jq -r .detail "$jd" 2>/dev/null)]"; fails=1
+fi
+
+if [ -f "$X39/bundle.tar" ]; then
+  "$ROOT/tests/harness_fv_controls/c40_guards.sh" "$X39/bundle.tar" "${OUT:?}/c40" > "$OUT/c40.out" 2>&1 || fails=1
+  grep -E '^c40_guards ' "$OUT/c40.out" || { echo "c40_guards WRONG no verdict line (see $OUT/c40.out)"; fails=1; }
+else
+  echo "c40_guards WRONG no bundle from c39"; fails=1
+fi
+if [ -f "$X39/bundle.tar" ]; then
+  "$ROOT/tests/harness_fv_controls/multihost_controls.sh" "${OUT:?}/multihost" "$X39/bundle.tar" > "$OUT/multihost.out" 2>&1 || fails=1
+  grep -E '^(c4[3-7]|c58|c60|c61)_' "$OUT/multihost.out"   # run_controls.sh requires each id
+fi
+D42="${OUT:?}/c42"; rm -rf "${D42:?}"; mkdir -p "$D42"; bad42=""
+for arg in "--trace" "-DEXTRA=a b" "-DCMAKE_CXX_FLAGS=-O0"; do
+  k42=$((${k42:-0} + 1)); Z="$D42/bad$k42"; mkdir -p "$Z"   # its own counter: c32 leaves k = "len_control"
+  "$ROOT/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$CPP" --target diff_transfer --no-merge \
+    --runs 1000 --cmake-arg "$arg" --out "$Z/run" > "$Z/out" 2>&1; zrc=$?
+  if [ $zrc -ne 3 ] || ! jq -e '.verdict == "ERROR" and (.detail | startswith("cmake args refused"))' "$Z/run/fuzz.json" > /dev/null \
+     || [ -d "$Z/run/build" ]; then bad42+="[$arg](exit=$zrc) "; fi
+done
+cp -r "$CPP/corpus" "$D42/corpus"
+FV_CMAKE_ARGS="-DFV_CONTROL_UNUSED_SITE=1" "$ROOT/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$CPP" \
+  --target diff_transfer --no-merge --runs 2000 --corpus "$D42/corpus" --out "$D42/ok" > "$D42/ok.out" 2>&1; rc42=$?
+# FV_ names are harness-owned: the site default above must be refused too; then a valid pair must pass.
+FV_CMAKE_ARGS="-DSITE_DEPS_DIR=$ROOT/fixtures/conservation_cpp/impl" "$ROOT/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" \
+  --cmake-dir "$CPP" --target diff_transfer --no-merge --runs 2000 --corpus "$D42/corpus" --cmake-arg "-DEXTRA_DEFINITION=1" \
+  --out "$D42/ok2" > "$D42/ok2.out" 2>&1; rc42b=$?
+want=$( (cd "$ROOT/fixtures/conservation_cpp/impl" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum) | sha256sum | cut -d' ' -f1)
+if [ -z "$bad42" ] && [ $rc42 -eq 3 ] && jq -e '.detail | contains("harness-owned name FV_CONTROL_UNUSED_SITE")' "$D42/ok/fuzz.json" > /dev/null \
+   && [ $rc42b -eq 0 ] && jq -e --arg w "$want" '.verdict == "PASS" and (.cmake_args | length) == 2
+     and .cmake_args[0].source == "site" and .cmake_args[0].paths[0].kind == "dir_manifest" and .cmake_args[0].paths[0].sha256 == $w
+     and .cmake_args[1] == {arg: "-DEXTRA_DEFINITION=1", source: "cli", paths: []}' "$D42/ok2/fuzz.json" > /dev/null \
+   && grep -q 'EXTRA_DEFINITION' "$D42/ok2/build/CMakeCache.txt" 2>/dev/null; then
+  echo "c42_cmake_args OK non -D, whitespace and CMAKE_CXX_FLAGS: ERROR before build; FV_ site name refused; site dir + cli -D: PASS, recorded (dir manifest ${want:0:12}), reached CMakeCache"
+else
+  echo "c42_cmake_args WRONG refused-bad=[${bad42:-ok}] fv-name exit=$rc42 [$(jq -r .detail "$D42/ok/fuzz.json" 2>/dev/null)] valid exit=$rc42b $(jq -c '{verdict, detail, cmake_args}' "$D42/ok2/fuzz.json" 2>/dev/null)"; fails=1
+fi
 "$ROOT/tests/harness_fv_controls/c48_record_failure.sh" "$ROOT/fuzz/run_fuzz.sh" "${OUT:?}/c48" > "$OUT/c48.out" 2>&1 || fails=1
 grep -E '^c48_record_failure ' "$OUT/c48.out" || { echo "c48_record_failure WRONG no verdict line (see $OUT/c48.out)"; fails=1; }
+"$ROOT/tests/harness_fv_controls/c50_bytes_abi.sh" "${OUT:?}/c50" > "$OUT/c50.out" 2>&1 || fails=1
+grep -E '^c50_bytes_abi ' "$OUT/c50.out" || { echo "c50_bytes_abi WRONG no verdict line (see $OUT/c50.out)"; fails=1; }
 
 merged() { # merged ID IMPL_DIR  — a campaign WITH the corpus merge, into this control's own corpus copy
   local id="$1" impl="$2"
@@ -290,5 +396,26 @@ if [ $rc -eq 3 ] && [ "$(jq -r .verdict "$j")" = ERROR ] && jq -r .detail "$j" |
   echo "c59_merge_inner_start OK ERROR: $(jq -r .detail "$j" | cut -c1-120)"
 else
   echo "c59_merge_inner_start WRONG exit=$rc $(jq -c '{verdict,detail}' "$j" 2>/dev/null | cut -c1-300)"; fails=1
+fi
+
+campaign c62_slow_units_jobs --jobs 2 --runs 4000 --impl-dir "$ROOT/tests/harness_fv_controls/variants/c62_slow_first"
+rc=$?; j="$OUT/c62_slow_units_jobs/run/fuzz.json"
+if [ $rc -eq 0 ] && jq -e '.verdict == "PASS" and (.slow_units | length) >= 1 and all(.slow_units[]; test("^w[0-9]+-slow-unit-"))' "$j" > /dev/null; then
+  echo "c62_slow_units_jobs OK --jobs 2, a slow but correct first input per worker: PASS, slow units recorded: $(jq -r '.slow_units | join(" ") | .[0:120]' "$j")"
+else
+  echo "c62_slow_units_jobs WRONG exit=$rc $(jq -c '{verdict, detail, slow_units}' "$j" 2>/dev/null | cut -c1-300)"; fails=1
+fi
+D63="$OUT/c63"; rm -rf "${D63:?}"; mkdir -p "$D63"; cp -r "$CPP/corpus" "$D63/corpus-a"; cp -r "$CPP/corpus" "$D63/corpus-b"
+"$ROOT/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$CPP" --target diff_transfer --corpus "$D63/corpus-a" \
+  --no-merge --runs 300000 --out "$D63/run" > "$D63/a.out" 2>&1 & pa=$!
+for i in $(seq 1 240); do [ -e "$D63/run/build" ] && break; sleep 0.5; done
+"$ROOT/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$CPP" --target diff_transfer --corpus "$D63/corpus-b" \
+  --no-merge --runs 1000 --out "$D63/run" > "$D63/b.out" 2>&1; rb=$?
+alive=$(kill -0 $pa 2>/dev/null && echo yes || echo no); wait $pa; ra=$?
+if [ "$alive" = yes ] && [ $rb -eq 3 ] && grep -q 'another run holds' "$D63/b.out" && [ $ra -eq 0 ] \
+   && jq -e '.verdict == "PASS" and (.runs == "300000")' "$D63/run/fuzz.json" > /dev/null; then
+  echo "c63_out_lock OK a second run on a busy --out: refused (exit 3, $(grep -m1 -o 'another run holds[^:]*' "$D63/b.out")); the first run: PASS, its record intact"
+else
+  echo "c63_out_lock WRONG second exit=$rb [$(tail -1 "$D63/b.out" | cut -c1-100)] overlap=$alive first exit=$ra $(jq -c '{verdict, runs}' "$D63/run/fuzz.json" 2>/dev/null)"; fails=1
 fi
 exit $fails

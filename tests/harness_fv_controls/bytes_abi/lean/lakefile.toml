@@ -1,0 +1,7 @@
+name = "fv_bytes_abi"
+version = "0.1.0"
+defaultTargets = ["BytesOracle"]
+
+# Control c50 only: two ByteArray -> ByteArray exports for the oracle ABI test.
+[[lean_lib]]
+name = "BytesOracle"

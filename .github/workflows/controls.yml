@@ -15,7 +15,8 @@ permissions:
 jobs:
   controls:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45    # a cold install plus the suite took about 18 minutes on a hosted runner
+    timeout-minutes: 90    # a cold install plus the suite took about 18 minutes on a hosted runner
+                           # before v0.3.0; v0.3.0 adds the multi-worker and merge controls
     defaults:
       run:
         shell: bash

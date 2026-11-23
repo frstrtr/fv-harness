@@ -1,0 +1,8 @@
+{
+  "network": "TRON mainnet",
+  "source": "POST https://api.trongrid.io/wallet/getchainparameters (public, no key)",
+  "fetched": "2026-11-22T20:52+04:00",
+  "sha256": "9012d4a9211268c1861a8c052ab26b82e4feab3cf96d33c643fdbf378b9b0c8f",
+  "keys": 81,
+  "note": "Byte-for-byte the API's answer. An entry without a value is 0 (protobuf omits zeros). Applied completely by fuzz/tron-tvm/FvTronTvmDriver.java, which refuses unknown keys and unset allow*/energy parameters."
+}

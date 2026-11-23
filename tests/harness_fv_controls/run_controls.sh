@@ -156,35 +156,51 @@ else
 fi
 
 # Control 1 (fuzz leg) and Control 6 (C++ drift): the differential fuzzer (Module 5).
-"$ROOT/tests/harness_fv_controls/run_fuzz_controls.sh" "$OUT/fuzz" > "$OUT/fuzz.out" 2>&1
-while read -r id res detail; do
-  [ -n "$id" ] && report "$id" "$res" "$detail"
-done < "$OUT/fuzz.out"
-grep -qE "^c1_fuzz " "$OUT/fuzz.out" && grep -qE "^c6_cpp_drift " "$OUT/fuzz.out" && grep -qE "^c7_lsan_leak " "$OUT/fuzz.out" && grep -qE "^c8_vendored_tamper " "$OUT/fuzz.out" && grep -qE "^c9_edge_not_exercised " "$OUT/fuzz.out" \
-   && grep -qE "^c10_leak_class " "$OUT/fuzz.out" && grep -qE "^c11_hang " "$OUT/fuzz.out" && grep -qE "^c12_growth " "$OUT/fuzz.out" \
-   && grep -qE "^c13_classify_env " "$OUT/fuzz.out" && grep -qE "^c14_zero_limits " "$OUT/fuzz.out" && grep -qE "^c30_draft_not_countable " "$OUT/fuzz.out" && grep -qE "^c32_len_limits " "$OUT/fuzz.out" \
-   && grep -qE "^c48_record_failure " "$OUT/fuzz.out" && grep -qE "^c53_merge_failure " "$OUT/fuzz.out" && grep -qE "^c54_merge_inner_exit " "$OUT/fuzz.out" && grep -qE "^c59_merge_inner_start " "$OUT/fuzz.out" ||
-  report fuzz_controls WRONG "runner produced no verdict lines (see $OUT/fuzz.out)"
+# Every expected control must report a line (OK, WRONG, or SKIPPED with its reason), and a runner that
+# exits non-zero without a WRONG line of its own (it crashed, or a control script stopped early) is a
+# failure too.
+collect() { # collect RUNNER_NAME OUT_FILE EXIT EXPECTED_IDS...
+  local name="$1" f="$2" rc="$3" c id res detail; shift 3
+  while read -r id res detail; do
+    [[ "$id" =~ ^c[0-9]+[a-z]?_[a-z0-9_]+$ ]] || continue
+    [ "$res" = SKIPPED ] && res=SKIP
+    report "$id" "$res" "$detail"
+  done < "$f"
+  for c in "$@"; do
+    grep -qE "^$c +(OK|WRONG|SKIP|SKIPPED) " "$f" || report "$c" WRONG "no verdict line from the $name runner (see $f)"
+  done
+  if [ "$rc" -ne 0 ] && ! grep -qE '^c[0-9]+[a-z]?_[a-z0-9_]+ +WRONG ' "$f"; then
+    report "${name}_runner" WRONG "exited $rc without a WRONG line: $(grep -vE '^c[0-9]' "$f" | tail -1 | cut -c1-160)"
+  fi
+}
+FUZZ_IDS="c1_fuzz c6_cpp_drift c7_lsan_leak c8_vendored_tamper c9_edge_not_exercised c10_leak_class c11_hang c12_growth
+  c13_classify_env c14_zero_limits c30_draft_not_countable c32_len_limits c38_jobs c39_remote_bundle c40_guards c42_cmake_args
+  c43_merge c44_bundle_strict c45_pause_no_hang c46_ssh_localhost c58_remote_same_name c47_run_name c60_runs_time c61_out_unpack
+  c48_record_failure c50_bytes_abi c53_merge_failure c54_merge_inner_exit c59_merge_inner_start c62_slow_units_jobs c63_out_lock"
+LANG_IDS="c15_rust_clean c16_rust_drift c17_rust_overflow c18_rust_vendored_tamper c19_rust_profile_off
+  c52_py_merge c21_py_clean c22_py_drift c23_py_wide c24_py_vendored_tamper c55_py_oracle_error
+  c25_evm_clean c26_evm_drift c27_evm_overflow c28_evm_vendored_tamper c29_evm_pins
+  c33_tron_tvm_trc10 c34_tron_tvm_clean c35_tron_tvm_drift c36_tron_tvm_refusals c37_tron_tvm_vendored_tamper
+  c56_tron_tvm_roundtrip c57_tron_tvm_build_pins c64_tron_tvm_record c49_tron_tvm_itx_drop c51_tron_tvm_guidance c41_tron_tvm_coverage"
+
+# Control 1 (fuzz leg) and Control 6 (C++ drift): the differential fuzzer (Module 5), and the multi-worker
+# controls.
+"$ROOT/tests/harness_fv_controls/run_fuzz_controls.sh" "$OUT/fuzz" > "$OUT/fuzz.out" 2>&1; rcf=$?
+# shellcheck disable=SC2086
+collect fuzz "$OUT/fuzz.out" $rcf $FUZZ_IDS
 
 # Languages beyond C++ (docs/LANGUAGES.md): SKIP when a toolchain is absent.
-FV_LANG_CONTROLS="rust python evm" "$ROOT/tests/harness_fv_controls/run_lang_controls.sh" "$OUT/lang" > "$OUT/lang.out" 2>&1
-while read -r id res detail; do
-  [ -n "$id" ] && report "$id" "$res" "$detail"
-done < "$OUT/lang.out"
-for c in c15_rust_clean c16_rust_drift c17_rust_overflow c18_rust_vendored_tamper c19_rust_profile_off \
-         c21_py_clean c22_py_drift c23_py_wide c24_py_vendored_tamper \
-         c25_evm_clean c26_evm_drift c27_evm_overflow c28_evm_vendored_tamper c29_evm_pins; do
-  grep -qE "^$c " "$OUT/lang.out" || report "$c" WRONG "no verdict line from the language runner (see $OUT/lang.out)"
-done
-grep -qE "^c15_rust_clean " "$OUT/lang.out" ||
-  report lang_controls WRONG "runner produced no verdict lines (see $OUT/lang.out)"
+FV_LANG_CONTROLS="rust python evm tron-tvm" "$ROOT/tests/harness_fv_controls/run_lang_controls.sh" "$OUT/lang" > "$OUT/lang.out" 2>&1; rcl=$?
+# shellcheck disable=SC2086
+collect lang "$OUT/lang.out" $rcl $LANG_IDS
 
 # Control 20: a language the gate host requires (FV_REQUIRE_LANGS) may not be skipped.
 D20="$OUT/c20_required_lang"; mkdir -p "$D20"
-FV_LANG_CONTROLS="rust python evm" FV_REQUIRE_LANGS="rust python evm" FV_RUST_HOME="$D20/no-toolchain" FV_PY="$D20/no-python" FV_SOLC="$D20/no-solc" "$ROOT/tests/harness_fv_controls/run_lang_controls.sh" "$D20/req" > "$D20/req.out" 2>&1; r1=$?
-FV_LANG_CONTROLS="rust python evm" FV_REQUIRE_LANGS= FV_RUST_HOME="$D20/no-toolchain" FV_PY="$D20/no-python" FV_SOLC="$D20/no-solc" "$ROOT/tests/harness_fv_controls/run_lang_controls.sh" "$D20/opt" > "$D20/opt.out" 2>&1; r2=$?
-if [ $r1 -ne 0 ] && [ "$(grep -c ' WRONG required language' "$D20/req.out")" = 15 ] && [ $r2 -eq 0 ] && [ "$(grep -c ' SKIP ' "$D20/opt.out")" = 15 ]; then
-  report c20_required_lang OK "required (rust, python, evm) + no toolchains: 15 WRONG (exit $r1); not required: 15 SKIP (exit 0)"
+FV_LANG_CONTROLS="rust python evm tron-tvm" FV_REQUIRE_LANGS="rust python evm tron-tvm" FV_RUST_HOME="$D20/no-toolchain" FV_PY="$D20/no-python" FV_SOLC="$D20/no-solc" FV_TRON_TVM_HOME="$D20/no-tvm" "$ROOT/tests/harness_fv_controls/run_lang_controls.sh" "$D20/req" > "$D20/req.out" 2>&1; r1=$?
+FV_LANG_CONTROLS="rust python evm tron-tvm" FV_REQUIRE_LANGS= FV_RUST_HOME="$D20/no-toolchain" FV_PY="$D20/no-python" FV_SOLC="$D20/no-solc" FV_TRON_TVM_HOME="$D20/no-tvm" "$ROOT/tests/harness_fv_controls/run_lang_controls.sh" "$D20/opt" > "$D20/opt.out" 2>&1; r2=$?
+n20w=$(grep -c ' WRONG required language' "$D20/req.out"); n20s=$(grep -c ' SKIP ' "$D20/opt.out")
+if [ $r1 -ne 0 ] && [ "$n20w" -ge 20 ] && [ "$n20w" = "$n20s" ] && [ $r2 -eq 0 ]; then
+  report c20_required_lang OK "required (rust, python, evm, tron-tvm) + no toolchains: $n20w WRONG (exit $r1); not required: $n20s SKIP (exit 0), one per language control"
 else
   report c20_required_lang WRONG "required exit=$r1 [$(head -1 "$D20/req.out")]; optional exit=$r2 [$(head -1 "$D20/opt.out")]"
 fi

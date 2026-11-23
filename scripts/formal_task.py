@@ -38,6 +38,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 import time
 
 HARNESS = pathlib.Path(__file__).resolve().parent.parent
@@ -373,6 +374,87 @@ def cmd_couple(a):
     return 3
 
 
+def closed_tree(proj: pathlib.Path, generated: list[pathlib.Path] | None = None) -> dict:
+    """The tree a closure is about.
+    commit:        the project's git HEAD, else a .source-commit file in the project or a parent (a git
+                   archive of that commit);
+    content_tree:  what the run actually used. With git, the tree id of the work tree's files written
+                   through a throw-away index (git add -A, .gitignore respected); without git, the sha256 of
+                   a sorted sha256 manifest of the tree under the .source-commit.
+    excluded:      only the run's own generated directories, by exact path (the project's .lake, and any
+                   further directories the caller names); a source directory that merely happens to be
+                   called build or .lake elsewhere is NOT excluded.
+    tracked_changes: whether tracked files differ from HEAD (git only)."""
+    gen = [g.resolve() for g in ([proj / ".lake"] + list(generated or [])) if g.exists()]
+    top = subprocess.run(["git", "-C", str(proj), "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    if top.returncode == 0:
+        root = pathlib.Path(top.stdout.strip()).resolve()
+        rel = [str(g.relative_to(root)) for g in gen if root in g.parents]
+        # Paths .gitignore already ignores are left out by `git add -A` itself (and git refuses an
+        # exclude pathspec that names them); the record still lists them as excluded.
+        need = [r for r in rel if subprocess.run(["git", "-C", str(root), "check-ignore", "-q", r]).returncode != 0]
+        head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        dirty = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+                               capture_output=True, text=True).stdout.strip()
+        with tempfile.TemporaryDirectory() as td:
+            env = dict(os.environ, GIT_INDEX_FILE=str(pathlib.Path(td) / "index"))
+            subprocess.run(["git", "-C", str(root), "add", "-A", "--", ".", *[f":(exclude,literal){r}" for r in need]],
+                           env=env, capture_output=True, check=True)
+            content = subprocess.run(["git", "-C", str(root), "write-tree"], env=env, capture_output=True, text=True,
+                                     check=True).stdout.strip()
+        head_tree = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD^{tree}"], capture_output=True,
+                                   text=True).stdout.strip()
+        return {"commit": head or None, "source": "git HEAD", "content_tree": content, "content_kind": "git tree",
+                "commit_tree": head_tree or None, "content_equals_commit": content == head_tree,
+                "tracked_changes": bool(dirty), "excluded": rel}
+    for d in [proj, *proj.parents]:
+        f = d / ".source-commit"
+        if f.is_file():
+            d = d.resolve()
+            rel = [str(g.relative_to(d)) for g in gen if d in g.parents]
+            h = hashlib.sha256()
+            for x in sorted(p for p in d.rglob("*") if p.is_file()):
+                if any(g == x or g in x.resolve().parents for g in gen):
+                    continue
+                h.update(f"{sha256(x)}  {x.relative_to(d)}\n".encode())
+            return {"commit": f.read_text().strip(), "source": str(f), "content_tree": h.hexdigest(),
+                    "content_kind": "sha256 of a sorted sha256 manifest", "commit_tree": None,
+                    "content_equals_commit": None, "tracked_changes": None, "excluded": rel}
+    return {"commit": None, "source": "unknown", "content_tree": None, "content_kind": None,
+            "commit_tree": None, "content_equals_commit": None, "tracked_changes": None, "excluded": []}
+
+
+def harness_state() -> dict:
+    """The harness the closure ran with, and whether its files differ from that commit.
+    A deployment (DEPLOYED_COMMIT) is checked against DEPLOYED_MANIFEST.sha256, written at deploy time
+    from the git archive (scripts/deploy_manifest.sh): a changed or missing file makes it dirty; files
+    not in the manifest are listed as deployment data (site config, locks). A checkout uses git status."""
+    f = HARNESS / "DEPLOYED_COMMIT"
+    if f.is_file():
+        commit = f.read_text().strip()
+        m = HARNESS / "DEPLOYED_MANIFEST.sha256"
+        if not m.is_file():
+            return {"commit": commit, "kind": "deployment", "dirty": None, "changed": [], "extra": [],
+                    "note": "no DEPLOYED_MANIFEST.sha256: cleanliness unknown"}
+        listed, changed = set(), []
+        for line in m.read_text().splitlines():
+            h, _, rel = line.partition("  ")
+            listed.add(rel)
+            x = HARNESS / rel
+            if not x.is_file() or sha256(x) != h:
+                changed.append(rel)
+        skip = {"DEPLOYED_COMMIT", "DEPLOYED_MANIFEST.sha256"}
+        extra = sorted(str(x.relative_to(HARNESS)) for x in HARNESS.rglob("*")
+                       if x.is_file() and str(x.relative_to(HARNESS)) not in listed | skip and "__pycache__" not in x.parts)
+        return {"commit": commit, "kind": "deployment", "dirty": bool(changed), "changed": changed[:50], "extra": extra[:50]}
+    r = subprocess.run(["git", "-C", str(HARNESS), "rev-parse", "--short=12", "HEAD"], capture_output=True, text=True)
+    if r.returncode == 0:
+        st = subprocess.run(["git", "-C", str(HARNESS), "status", "--porcelain", "--untracked-files=no"],
+                            capture_output=True, text=True).stdout.splitlines()
+        return {"commit": r.stdout.strip(), "kind": "git checkout", "dirty": bool(st), "changed": [l[3:] for l in st][:50], "extra": []}
+    return {"commit": "unknown", "kind": "unknown", "dirty": None, "changed": [], "extra": []}
+
+
 def cmd_close(a):
     t = Task(a.task); st = t.load(); guard(st, "close")
     proj = pathlib.Path(st["project"])
@@ -386,6 +468,22 @@ def cmd_close(a):
         t.move(st, "ERROR", f"CLOSE refused: not countable (fuzz verdict {fz.get('verdict')!r}, draft "
                             f"{fz.get('draft')!r}, gate verdict {verdict.get('verdict')!r})")
         return 3
+    go = (fz.get("remote") or {}).get("guard_overrides") or []
+    if go:  # fake guard probes or thresholds are for controls, never for a countable campaign
+        t.move(st, "ERROR", f"CLOSE refused: the campaign ran with guard overrides {', '.join(go)}")
+        return 3
+    if fz.get("lang") == "tron-tvm":  # the reference must be named and must have run
+        tt = fz.get("tron_tvm") or {}
+        miss = [k for k, ok in (("java_tron_commit", tt.get("java_tron_commit")),
+                                ("chain_profile.sha256", (tt.get("chain_profile") or {}).get("sha256")),
+                                ("driver_config", tt.get("driver_config")),
+                                ("classpath_manifest_sha256", tt.get("classpath_manifest_sha256")),
+                                ("jdk_tree_sha256", tt.get("jdk_tree_sha256")),
+                                ("processes.with_transactions >= 1",
+                                 ((tt.get("processes") or {}).get("with_transactions") or 0) >= 1)) if not ok]
+        if miss:
+            t.move(st, "ERROR", f"CLOSE refused: the TRON-TVM fuzz record lacks {', '.join(miss)}")
+            return 3
 
     def grab(stage, pat):
         p = audit / "stages" / f"{stage}.log"
@@ -395,6 +493,8 @@ def cmd_close(a):
     bundle = {
         # First on purpose: the operator compares this fingerprint with the one they stated.
         "spec_lock_signer": signer,
+        "closed_tree": closed_tree(proj, [pathlib.Path(st["cpp"]["cmake_dir"]) / "build"]),
+        "harness_commit": (hs := harness_state())["commit"], "harness": hs,
         "task": st["task"], "closed": now(),
         "source_digests": {
             "lock_manifest": st.get("lock_digest"),
@@ -413,7 +513,8 @@ def cmd_close(a):
                     "con_ron": grab("con_ron", r"^con-ron: (accepted|declined|rejected)"),
                     "con_leche_compare": grab("con_leche_compare", r"^con-leche: (accepted|theorem)")},
         "fuzz": {k: fz.get(k) for k in ("lang", "verdict", "runs", "max_total_time", "campaign_seconds", "stats", "corpus",
-                                        "impl_dir", "vendored", "limits", "evm")},
+                                        "impl_dir", "vendored", "cmake_args", "limits", "jobs", "workers",
+                                        "total_executions", "remote", "evm", "tron_tvm")},
         # Edge-case classes: labels for the reviewer, never part of the verdict.
         "edge_cases": fz.get("classes"),
         "provenance": verdict.get("provenance"),
@@ -426,7 +527,16 @@ def cmd_close(a):
           f"pinned {signer.get('pinned', '-')}, match={signer.get('match', '-')}). Compare with the fingerprint "
           "the operator stated; a report whose fingerprint differs is void.", "",
           f"# Closure report: {st['task']}", "", f"Closed {bundle['closed']}. Gate **{verdict.get('verdict')}**, "
-          f"fuzz **{fz.get('verdict')}**.", "", "## Digests", f"- lock manifest: `{st.get('lock_digest')}`"]
+          f"fuzz **{fz.get('verdict')}**.", "",
+          f"Closed tree: `{bundle['closed_tree'].get('commit')}` ({bundle['closed_tree'].get('source')}"
+          + ("; tracked files CHANGED" if bundle["closed_tree"].get("tracked_changes") else "")
+          + f"), content tree `{bundle['closed_tree'].get('content_tree')}` ({bundle['closed_tree'].get('content_kind')}"
+          + ("; equals the commit's tree" if bundle["closed_tree"].get("content_equals_commit")
+             else "; differs from the commit's tree" if bundle["closed_tree"].get("content_equals_commit") is False else "")
+          + "). "
+          f"Harness: `{bundle['harness_commit']}` ({bundle['harness']['kind']}; "
+          + {True: "DIRTY: " + ", ".join(bundle["harness"]["changed"][:5]), False: "clean",
+             None: "cleanliness UNKNOWN"}[bundle["harness"]["dirty"]] + ").", "", "## Digests", f"- lock manifest: `{st.get('lock_digest')}`"]
     md += [f"- {k}: `{v}`" for k, v in bundle["source_digests"]["solution"].items()]
     md += [f"- {k}: `{v}`" for k, v in bundle["source_digests"]["impl"]["files"].items()]
     md += [f"- export {k}: `{v}`" for k, v in (verdict.get("exports_sha256") or {}).items()]
@@ -440,7 +550,7 @@ def cmd_close(a):
            + (f"; walled: {s['wall_reason']}" if s.get("wall_reason") else "") for n, s in st["stubs"].items()]
     md += ["", "## Differential fuzz", f"- language: `{fz.get('lang', 'cpp')}`, implementation `{bundle['source_digests']['impl']['dir']}`",
            f"- {fz.get('stats', '').strip()}", f"- {fz.get('campaign_seconds')} s"]
-    ex = fz.get("evm")
+    ex = fz.get("evm") or fz.get("tron_tvm")
     if ex:
         md += [f"- {fz.get('lang')} pins: " + ", ".join(f"{k} `{ex[k]}`" for k in sorted(ex) if isinstance(ex[k], (str, int))
                                                       and k not in ("contract_coverage",))[:2000]]
@@ -495,7 +605,7 @@ def main():
     p.add_argument("--project", required=True); p.add_argument("--lock", required=True)
     p.add_argument("--cmake-dir", required=True); p.add_argument("--target", required=True)
     p.add_argument("--impl-dir", help="production sources (default: run_fuzz.sh's for the language; C++: CMAKE_DIR/../impl)")
-    p.add_argument("--lang", choices=("cpp", "rust", "python", "evm"), default="cpp",
+    p.add_argument("--lang", choices=("cpp", "rust", "python", "evm", "tron-tvm"), default="cpp",
                    help="the implementation's language, passed to fuzz/run_fuzz.sh --lang")
     p.add_argument("--budget", type=int); p.add_argument("--max-attempts", type=int)
     p.add_argument("--same-failure-wall", choices=("on", "off"))
@@ -506,7 +616,16 @@ def main():
     for c in ("spec-lock", "discharge", "audit", "couple", "close", "run", "status"):
         sub.add_parser(c).add_argument("task")
     p = sub.add_parser("decompose"); p.add_argument("task"); p.add_argument("--by", required=True)
+    p = sub.add_parser("tree", help="print the closed_tree record of a project directory (no task)")
+    p.add_argument("project")
+    sub.add_parser("harness", help="print the harness record (commit, clean or dirty) of this harness")
     a = ap.parse_args()
+    if a.cmd == "tree":
+        print(json.dumps(closed_tree(pathlib.Path(a.project).resolve())))
+        sys.exit(0)
+    if a.cmd == "harness":
+        print(json.dumps(harness_state()))
+        sys.exit(0)
     fn = {"init": cmd_init, "set": cmd_set, "spec-lock": cmd_spec_lock, "decompose": cmd_decompose, "discharge": cmd_discharge,
           "audit": cmd_audit, "couple": cmd_couple, "close": cmd_close, "run": cmd_run, "status": cmd_status}[a.cmd]
     sys.exit(fn(a) or 0)
