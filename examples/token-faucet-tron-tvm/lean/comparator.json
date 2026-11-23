@@ -1,0 +1,8 @@
+{
+    "challenge_module": "Challenge",
+    "solution_module": "Solution",
+    "theorem_names": ["Faucet.step_cap", "Faucet.step_preserves", "Faucet.run_preserves",
+                      "Faucet.step_conserves", "Faucet.dispense_one", "Faucet.refused_changes_nothing",
+                      "Faucet.step_fits"],
+    "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]
+}
