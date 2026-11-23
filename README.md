@@ -28,10 +28,11 @@ The pipeline:
   together with runs of the newer controls against the code before their fix, where they fail.
 - **Drafts.** `fuzz/run_fuzz.sh --draft` exercises an unsigned specification. Its results are stamped
   as drafts and never count toward a closure.
-- **Languages.** Shipped: C++ (and C), Rust, Python, and Solidity contracts on an in-process EVM
-  (`examples/risk-limit`, `examples/risk-limit-rust`, `examples/risk-limit-py`,
-  `examples/risk-limit-evm`). Planned: contracts on the TRON Virtual Machine (TVM) in the next release,
-  then Go, Java/Kotlin and JavaScript/TypeScript. See `docs/LANGUAGES.md`.
+- **Languages.** Shipped: C++ (and C), Rust, Python, Solidity contracts on an in-process EVM, and
+  contracts on the TRON Virtual Machine (TVM) against a reference executor (`examples/risk-limit`,
+  `examples/risk-limit-rust`, `examples/risk-limit-py`, `examples/risk-limit-evm`,
+  `examples/token-faucet-tron-tvm`). Planned: Go, Java/Kotlin and JavaScript/TypeScript. See
+  `docs/LANGUAGES.md`.
 - **On first use.** While mapping an upstream project's functions to the statements of a
   specification, we found a signed overflow in Dash Core's superblock payment total, by reading the
   code during that mapping, not with the fuzzer. The Dash Core developers confirmed it and opened a fix

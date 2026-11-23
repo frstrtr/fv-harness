@@ -34,9 +34,12 @@ an example whose drift variant (a one-unit error) must FAIL.
 - **Solidity / EVM:** the contract, compiled by a pinned solc, runs in revm inside the fuzz process,
   next to the natively linked oracle; outcomes, return data and logs are compared. Example:
   `examples/risk-limit-evm`.
+- **TRON-TVM contracts:** the Python loop drives the binding; the contract runs on java-tron's own
+  TRON-TVM, built from source at a pinned release and run offline, and every implementation step must
+  send a transaction to it. Example: `examples/token-faucet-tron-tvm`; details in
+  `docs/TRON-TVM-REFERENCE.md`.
 
-Planned: contracts on the TRON Virtual Machine (TVM), in the next release; then Go, Java/Kotlin and
-TypeScript/JavaScript (see the matrix and the recommended order below).
+Planned: Go, Java/Kotlin and TypeScript/JavaScript (see the matrix and the recommended order below).
 
 ## Support matrix
 
@@ -51,7 +54,7 @@ Checked at source on 2026-11-22.
 | Go | native fuzzing (`go test -fuzz`, Go 1.27, BSD-3-Clause) | cgo to the static library | `-asan` with clang | planned | A different engine and command line: it needs its own runner, and its corpus format differs. |
 | Java / Kotlin | Jazzer (Apache-2.0) | JNA or the Panama FFI on `oracle_shared` | none for JVM code; native parts can use ASan | planned | needs a JVM; GC timing makes per-input timeouts noisier |
 | TypeScript / JavaScript | Jazzer.js (Apache-2.0) | N-API or an FFI module on `oracle_shared` | none for JS | planned | Number vs BigInt: 64-bit values must be BigInt end to end |
-| TRON-TVM contracts | the Python loop (Atheris); the contract runs on java-tron's own TRON-TVM, built from source at a pinned release and run offline | `ctypes` on `oracle_shared`, as for Python | none for the contract (energy is its cost measure) | planned, next release | a JVM reference executor: slower per call than an in-process EVM |
+| TRON-TVM contracts | the Python loop (Atheris); the contract runs on java-tron's own TRON-TVM, built from source at a pinned release and run offline | `ctypes` on `oracle_shared`, as for Python | none for the contract (energy is its cost measure) | **shipped** (`examples/token-faucet-tron-tvm`) | a JVM reference executor: slower per call than an in-process EVM |
 | Solidity / EVM | libFuzzer through cargo-fuzz; the contract runs in revm 43.0.3 (MIT), in process; solc 0.8.39 (GPL-3.0, used as a compiler) | the oracle is linked natively into the same process | ASan over the EVM and the binding; the contract itself has none (gas and energy are its cost measure) | **shipped** (`examples/risk-limit-evm`) | A different shape (see below) |
 
 ## Rust: setup, pins and measured results
@@ -226,8 +229,8 @@ reference.
 3. **Python**: Atheris is libFuzzer underneath, so `run_fuzz.sh` reuses everything. Quant and
    risk prototypes often live in Python.
 4. **Solidity/EVM**: high value, but a different execution model (next section).
-5. **TRON-TVM contracts**: TRC-10 opcodes and TRON's energy rules, which an EVM does not have; a
-   reference executor in the next release.
+5. **TRON-TVM contracts**: TRC-10 opcodes and TRON's energy rules, which an EVM does not have;
+   shipped, with a reference executor.
 6. **Go**, then **Java/Kotlin**, then **TypeScript/JS**. Each needs a runner for a different engine
    or a managed runtime.
 
