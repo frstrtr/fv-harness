@@ -31,6 +31,12 @@ The pipeline:
   verdicts were unaffected (the campaign decides in-process, before the merge), but the persisted corpus
   did not grow. The merge now re-executes the run's wrapper, and a merge that did not run is ERROR, for
   every language (control c52).
+- **Known issue in v0.2.0, fixed in v0.2.1:** a failure *during* the corpus merge could end as PASS.
+  The merge re-runs every input in a fresh process; when one failed there (an implementation whose
+  behaviour depends on process state or order), libFuzzer retried without that input and reported
+  success. Now a finding during the merge is FAIL with its reproducer kept, an inner merge process that
+  died without a finding is ERROR, and a merge must complete in one attempt (controls c53, c54).
+  The input libFuzzer skipped was not added to the corpus either, so later replays did not see it.
 
 ## Start here
 
