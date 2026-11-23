@@ -60,6 +60,13 @@ lang_campaign() { # lang_campaign ID LANG DIR IMPL ARGS...
     > "$OUT/$id/run_fuzz.out" 2>&1
 }
 
+execs() { # execs ID -> executions to the finding: final stats, else the last status line; "replay" if found there
+  local r="$OUT/$1/run" n
+  if grep -q 'diff-oracle: MISMATCH\|panicked at\|Uncaught Python exception\|diff-oracle: DOMAIN' "$r/replay.log" 2>/dev/null; then echo replay; return; fi
+  n=$(grep -E '^stat::number_of_executed_units' "$r/campaign.log" 2>/dev/null | tail -1 | grep -oE '[0-9]+$')
+  [ -n "$n" ] || n=$(grep -oE '^#[0-9]+' "$r/campaign.log" 2>/dev/null | tail -1 | tr -d '#')
+  echo "${n:-unknown}"
+}
 pin_id() { # pin_id NAME FILE -> the VENDORED.sha256 id whose pinned body equals FILE, or nothing
   awk -v n="$1" -v h="$(sha256sum < "$2" | cut -d' ' -f1)" '!/^#/ && $2 == n && $3 == h { print $1; exit }' "$ROOT/fuzz/VENDORED.sha256"
 }
@@ -92,9 +99,9 @@ fi
 
 lang_campaign c16_rust_drift rust "$R" impl-drift --runs 32000 --time 600
 rc=$?; j="$OUT/c16_rust_drift/run/fuzz.json"
-n=$(grep -E '^stat::number_of_executed_units' "$OUT/c16_rust_drift/run/campaign.log" 2>/dev/null | tail -1 | grep -oE '[0-9]+$')
+n=$(execs c16_rust_drift)
 if [ $rc -eq 1 ] && jq -e '.detail | contains("oracle/implementation mismatch")' "$j" > /dev/null; then
-  echo "c16_rust_drift OK FAIL after ${n:-0 (replay)} executions (budget 32,000); $(grep -A4 'diff-oracle: MISMATCH' "$OUT/c16_rust_drift/run/campaign.log" "$OUT/c16_rust_drift/run/replay.log" 2>/dev/null | grep -E 'op |oracle|impl' | sed 's/^[^:]*-//' | tr -s ' ' | tr '\n' ';')"
+  echo "c16_rust_drift OK FAIL after ${n} executions (budget 32,000); $(grep -A4 'diff-oracle: MISMATCH' "$OUT/c16_rust_drift/run/campaign.log" "$OUT/c16_rust_drift/run/replay.log" 2>/dev/null | grep -E 'op |oracle|impl' | sed 's/^[^:]*-//' | tr -s ' ' | tr '\n' ';')"
 else
   echo "c16_rust_drift WRONG exit=$rc $(jq -c '{verdict, detail, campaign_seconds}' "$j" 2>/dev/null)"; fails=1
 fi
@@ -102,7 +109,7 @@ fi
 lang_campaign c17_rust_overflow rust "$R" impl-overflow --runs 37000 --time 600
 rc=$?; j="$OUT/c17_rust_overflow/run/fuzz.json"
 if [ $rc -eq 1 ] && jq -e '.detail | startswith("panic:") and contains("overflow")' "$j" > /dev/null; then
-  echo "c17_rust_overflow OK $(jq -r '.detail | .[0:150]' "$j") (after $(grep -E '^stat::number_of_executed_units' "$OUT/c17_rust_overflow/run/campaign.log" 2>/dev/null | tail -1 | grep -oE '[0-9]+$') executions, budget 37,000)"
+  echo "c17_rust_overflow OK $(jq -r '.detail | .[0:150]' "$j") (after $(execs c17_rust_overflow) executions, budget 37,000)"
 else
   echo "c17_rust_overflow WRONG exit=$rc $(jq -c '{verdict, detail}' "$j" 2>/dev/null)"; fails=1
 fi
@@ -169,9 +176,9 @@ else
   echo "c21_py_clean WRONG exit=$rc $(jq -c '{verdict, detail}' "$j" 2>/dev/null)"; fails=1
 fi
 lang_campaign c22_py_drift python "$P" impl-drift --runs 26000 --time 600
-rc=$?; j="$OUT/c22_py_drift/run/fuzz.json"; n=$(grep -E '^stat::number_of_executed_units' "$OUT/c22_py_drift/run/campaign.log" 2>/dev/null | tail -1 | grep -oE '[0-9]+$')
+rc=$?; j="$OUT/c22_py_drift/run/fuzz.json"; n=$(execs c22_py_drift)
 if [ $rc -eq 1 ] && jq -e '.detail | contains("oracle/implementation mismatch")' "$j" > /dev/null; then
-  echo "c22_py_drift OK FAIL after ${n:-0 (replay)} executions (budget 26,000)"
+  echo "c22_py_drift OK FAIL after ${n} executions (budget 26,000)"
 else
   echo "c22_py_drift WRONG exit=$rc $(jq -c '{verdict, detail, campaign_seconds}' "$j" 2>/dev/null)"; fails=1
 fi
