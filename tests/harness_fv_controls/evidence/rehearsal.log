@@ -13,4 +13,3 @@ OK    closure records the Tier-2 escalation counters
 OK    illegal-transition: exit 3, state CLOSED
 OK    spec-lock: exit 0, state DECOMPOSE
 OK    tamper-blocked: exit 11, state BLOCKED
-EXIT=0

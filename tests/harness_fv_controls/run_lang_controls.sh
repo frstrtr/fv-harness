@@ -4,7 +4,7 @@
 # implementation through fuzz/run_fuzz.sh --lang.
 #
 #   c15_rust_clean     correct Rust implementation, 10^6 runs: PASS, no leak report
-#   c16_rust_drift     a reduction one unit short: FAIL "oracle/implementation mismatch" within 10 s
+#   c16_rust_drift     a reduction one unit short: FAIL "oracle/implementation mismatch" within 32,000 executions
 #   c17_rust_overflow  the limit check adds before comparing (pos + open + q): with overflow checks
 #                      ON (cargo fuzz build -a) it FAILs as "panic: ... overflow"
 #   c18_rust_vendored_tamper  (a) a vendored copy of the harness driver fv_diff.rs passes the vendored
@@ -13,7 +13,9 @@
 #   c19_rust_profile_off  overflow-checks = false in the project's Cargo.toml, or in a
 #                      .cargo/config.toml cargo would read, is ERROR before any build
 #   c21_py_clean       correct Python implementation (Atheris), 10^6 runs: PASS
-#   c22_py_drift       a reduction one unit short: FAIL "oracle/implementation mismatch" within 10 s
+#   c52_py_merge       the corpus merge on the Python loop really runs: a campaign that adds units grows the
+#                      persisted corpus (copied), and the merge log reports success
+#   c22_py_drift       a reduction one unit short: FAIL "oracle/implementation mismatch" within 26,000 executions
 #   c23_py_wide        a fill adds 2^64 (a bug that reduction mod 2^64 would hide): FAIL "domain: ..."
 #   c24_py_vendored_tamper  (a) a vendored copy of the harness driver fv_diff.py passes untampered and,
 #                      with its comparison disabled, FAILs before any build; (b) a binding that
@@ -21,8 +23,11 @@
 #   c25_evm_clean      the correct contract (solc 0.8.39, in-process EVM), with fv.toml pinning its
 #                      runtime bytecode sha256: PASS; fuzz.json records the pinned solc sha256; the
 #                      outcome classes include submit reverting LimitExceeded() and none is NOT EXERCISED
-#   c26_evm_drift      a reduction one unit short: FAIL "oracle/implementation mismatch" within 50,000
-#                      executions (60 s wall cap; the EVM path is slower than native, see the block)
+#   c26_evm_drift      a reduction one unit short: FAIL "oracle/implementation mismatch" within 37,000
+#                      executions
+# Every control that must FIND something by search runs on an execution budget of at least 5x the worst
+# executions-to-find observed in past runs (--runs), with --time only as a hang guard: a time budget can
+# miss under host load (c27 on the v0.2.1 head did, once).
 #   c27_evm_overflow   (a) pos + open + q in checked uint64 arithmetic reverts with Panic(0x11) where
 #                      the model rejects: FAIL mismatch showing "panic 0x11"; (b) the same test inside
 #                      unchecked {} wraps and accepts: FAIL mismatch
@@ -51,10 +56,17 @@ lang_campaign() { # lang_campaign ID LANG DIR IMPL ARGS...
   cp -r "$LEAN" "$OUT/$id/lean"; rm -rf "$OUT/$id/lean/.lake"
   cp -r "$dir/fuzz/corpus" "$OUT/$id/corpus"
   "$ROOT/fuzz/run_fuzz.sh" --lang "$lang" --lean-project "$OUT/$id/lean" --lock "$LOCK" --cmake-dir "$dir/fuzz" \
-    --target diff_risk --impl-dir "$dir/$impl" --corpus "$OUT/$id/corpus" --no-merge --out "$OUT/$id/run" "$@" \
+    --target diff_risk --impl-dir "$dir/$impl" --corpus "$OUT/$id/corpus" $([ "${LANG_MERGE:-0}" = 1 ] || echo --no-merge) --out "$OUT/$id/run" "$@" \
     > "$OUT/$id/run_fuzz.out" 2>&1
 }
 
+execs() { # execs ID -> executions to the finding: final stats, else the last status line; "replay" if found there
+  local r="$OUT/$1/run" n
+  if grep -q 'diff-oracle: MISMATCH\|panicked at\|Uncaught Python exception\|diff-oracle: DOMAIN' "$r/replay.log" 2>/dev/null; then echo replay; return; fi
+  n=$(grep -E '^stat::number_of_executed_units' "$r/campaign.log" 2>/dev/null | tail -1 | grep -oE '[0-9]+$')
+  [ -n "$n" ] || n=$(grep -oE '^#[0-9]+' "$r/campaign.log" 2>/dev/null | tail -1 | tr -d '#')
+  echo "${n:-unknown}"
+}
 pin_id() { # pin_id NAME FILE -> the VENDORED.sha256 id whose pinned body equals FILE, or nothing
   awk -v n="$1" -v h="$(sha256sum < "$2" | cut -d' ' -f1)" '!/^#/ && $2 == n && $3 == h { print $1; exit }' "$ROOT/fuzz/VENDORED.sha256"
 }
@@ -85,20 +97,19 @@ else
   echo "c15_rust_clean WRONG exit=$rc leak_reports=$lsan $(jq -c '{verdict, detail}' "$j" 2>/dev/null)"; fails=1
 fi
 
-lang_campaign c16_rust_drift rust "$R" impl-drift --time 10
+lang_campaign c16_rust_drift rust "$R" impl-drift --runs 32000 --time 600
 rc=$?; j="$OUT/c16_rust_drift/run/fuzz.json"
-t=$(jq -r '.campaign_seconds // ""' "$j" 2>/dev/null)
-if [ $rc -eq 1 ] && jq -e '.detail | contains("oracle/implementation mismatch")' "$j" > /dev/null \
-   && { [ -z "$t" ] || [ "$(echo "$t < 10" | bc)" = 1 ]; }; then
-  echo "c16_rust_drift OK FAIL after ${t:-replay} s (limit 10 s); $(grep -A4 'diff-oracle: MISMATCH' "$OUT/c16_rust_drift/run/campaign.log" "$OUT/c16_rust_drift/run/replay.log" 2>/dev/null | grep -E 'op |oracle|impl' | sed 's/^[^:]*-//' | tr -s ' ' | tr '\n' ';')"
+n=$(execs c16_rust_drift)
+if [ $rc -eq 1 ] && jq -e '.detail | contains("oracle/implementation mismatch")' "$j" > /dev/null; then
+  echo "c16_rust_drift OK FAIL after ${n} executions (budget 32,000); $(grep -A4 'diff-oracle: MISMATCH' "$OUT/c16_rust_drift/run/campaign.log" "$OUT/c16_rust_drift/run/replay.log" 2>/dev/null | grep -E 'op |oracle|impl' | sed 's/^[^:]*-//' | tr -s ' ' | tr '\n' ';')"
 else
   echo "c16_rust_drift WRONG exit=$rc $(jq -c '{verdict, detail, campaign_seconds}' "$j" 2>/dev/null)"; fails=1
 fi
 
-lang_campaign c17_rust_overflow rust "$R" impl-overflow --time 10
+lang_campaign c17_rust_overflow rust "$R" impl-overflow --runs 37000 --time 600
 rc=$?; j="$OUT/c17_rust_overflow/run/fuzz.json"
 if [ $rc -eq 1 ] && jq -e '.detail | startswith("panic:") and contains("overflow")' "$j" > /dev/null; then
-  echo "c17_rust_overflow OK $(jq -r '.detail | .[0:150]' "$j") (after $(jq -r '.campaign_seconds // "replay" | .[0:5]' "$j") s)"
+  echo "c17_rust_overflow OK $(jq -r '.detail | .[0:150]' "$j") (after $(execs c17_rust_overflow) executions, budget 37,000)"
 else
   echo "c17_rust_overflow WRONG exit=$rc $(jq -c '{verdict, detail}' "$j" 2>/dev/null)"; fails=1
 fi
@@ -147,8 +158,16 @@ fi  # rust
 P="$ROOT/examples/risk-limit-py"; PY="${FV_PY:-$FV_ROOT/py/venv/bin/python}"
 if ! only python; then :
 elif ! { [ -x "$PY" ] && "$PY" -I -c 'import atheris' 2>/dev/null; }; then
-  absent python "$PY" c21_py_clean c22_py_drift c23_py_wide c24_py_vendored_tamper
+  absent python "$PY" c21_py_clean c22_py_drift c23_py_wide c24_py_vendored_tamper c52_py_merge
 else
+LANG_MERGE=1 lang_campaign c52_py_merge python "$P" impl --runs 20000
+rc=$?; j="$OUT/c52_py_merge/run/fuzz.json"; m52="$OUT/c52_py_merge/run/merge.log"
+n52a=$(ls "$P/fuzz/corpus" | wc -l); n52b=$(ls "$OUT/c52_py_merge/corpus" | wc -l); nu52=$(jq -r .stats "$j" 2>/dev/null | grep -oE 'new_units_added: *[0-9]+' | grep -oE '[0-9]+$')
+if [ $rc -eq 0 ] && grep -q '^MERGE-OUTER: successful in' "$m52" && [ "${nu52:-0}" -gt 0 ] && [ "$n52b" -gt "$n52a" ]; then
+  echo "c52_py_merge OK merge ran ($(grep -m1 -oE 'successful in [0-9]+ attempt\(s\)' "$m52")): $nu52 new units, corpus $n52a -> $n52b"
+else
+  echo "c52_py_merge WRONG exit=$rc new_units=${nu52:-?} corpus $n52a -> $n52b merge: $(grep -m1 -E 'successful|Permission denied|did not run' "$m52" 2>/dev/null | cut -c1-100) [$(jq -r .detail "$j" 2>/dev/null)]"; fails=1
+fi
 lang_campaign c21_py_clean python "$P" impl --runs 1000000
 rc=$?; j="$OUT/c21_py_clean/run/fuzz.json"
 if [ $rc -eq 0 ] && [ "$(jq -r .verdict "$j")" = PASS ]; then
@@ -156,15 +175,14 @@ if [ $rc -eq 0 ] && [ "$(jq -r .verdict "$j")" = PASS ]; then
 else
   echo "c21_py_clean WRONG exit=$rc $(jq -c '{verdict, detail}' "$j" 2>/dev/null)"; fails=1
 fi
-lang_campaign c22_py_drift python "$P" impl-drift --time 10
-rc=$?; j="$OUT/c22_py_drift/run/fuzz.json"; t=$(jq -r '.campaign_seconds // ""' "$j" 2>/dev/null)
-if [ $rc -eq 1 ] && jq -e '.detail | contains("oracle/implementation mismatch")' "$j" > /dev/null \
-   && { [ -z "$t" ] || [ "$(echo "$t < 10" | bc)" = 1 ]; }; then
-  echo "c22_py_drift OK FAIL after ${t:-replay} s (limit 10 s)"
+lang_campaign c22_py_drift python "$P" impl-drift --runs 26000 --time 600
+rc=$?; j="$OUT/c22_py_drift/run/fuzz.json"; n=$(execs c22_py_drift)
+if [ $rc -eq 1 ] && jq -e '.detail | contains("oracle/implementation mismatch")' "$j" > /dev/null; then
+  echo "c22_py_drift OK FAIL after ${n} executions (budget 26,000)"
 else
   echo "c22_py_drift WRONG exit=$rc $(jq -c '{verdict, detail, campaign_seconds}' "$j" 2>/dev/null)"; fails=1
 fi
-lang_campaign c23_py_wide python "$P" impl-wide --time 10
+lang_campaign c23_py_wide python "$P" impl-wide --runs 16000 --time 600
 rc=$?; j="$OUT/c23_py_wide/run/fuzz.json"
 if [ $rc -eq 1 ] && jq -e '.detail | startswith("domain:") and contains("outside [0, 2^64)")' "$j" > /dev/null; then
   echo "c23_py_wide OK $(jq -r .detail "$j")"
@@ -211,19 +229,19 @@ else
 fi
 # The EVM path runs about 10-20x fewer inputs per second than native code under ASan, and that rate
 # depends on the host. The criterion is therefore the number of EXECUTIONS before the drift is found
-# (<= 50,000; observed 5,000-8,000), with a 60 s wall cap, not the 10 s used for native targets.
-FV_NO_CLASSIFY=1 lang_campaign c26_evm_drift evm "$X" contract-drift --time 60
+# (budget 37,000 = 5x the worst observed 7,350; 900 s only as a hang guard).
+FV_NO_CLASSIFY=1 lang_campaign c26_evm_drift evm "$X" contract-drift --runs 37000 --time 900
 rc=$?; j="$OUT/c26_evm_drift/run/fuzz.json"; t=$(jq -r '.campaign_seconds // ""' "$j" 2>/dev/null)
 n=$(grep -m1 -oE 'stat::number_of_executed_units: *[0-9]+' "$OUT/c26_evm_drift/run/campaign.log" 2>/dev/null | grep -oE '[0-9]+$')
 if [ $rc -eq 1 ] && jq -e '.detail | contains("oracle/implementation mismatch")' "$j" > /dev/null \
-   && { [ -z "$t" ] || { [ -n "$n" ] && [ "$n" -le 50000 ]; }; }; then
-  echo "c26_evm_drift OK FAIL after ${n:-replay} executions, ${t:-0} s (limits 50,000 executions, 60 s)"
+   && { [ -z "$t" ] || { [ -n "$n" ] && [ "$n" -le 37000 ]; }; }; then
+  echo "c26_evm_drift OK FAIL after ${n:-replay} executions, ${t:-0} s (budget 37,000 executions; 900 s only as a hang guard)"
 else
   echo "c26_evm_drift WRONG exit=$rc executions=${n:-?} $(jq -c '{verdict, detail, campaign_seconds}' "$j" 2>/dev/null)"; fails=1
 fi
-FV_NO_CLASSIFY=1 lang_campaign c27_evm_overflow evm "$X" contract-overflow --time 10
+FV_NO_CLASSIFY=1 lang_campaign c27_evm_overflow evm "$X" contract-overflow --runs 48000 --time 900
 rca=$?; ja="$OUT/c27_evm_overflow/run/fuzz.json"
-FV_NO_CLASSIFY=1 lang_campaign c27b_evm_wrap evm "$X" contract-wrap --time 10
+FV_NO_CLASSIFY=1 lang_campaign c27b_evm_wrap evm "$X" contract-wrap --runs 48000 --time 900
 rcb=$?; jb="$OUT/c27b_evm_wrap/run/fuzz.json"
 if [ $rca -eq 1 ] && jq -e '.detail | contains("oracle/implementation mismatch")' "$ja" > /dev/null \
    && grep -q 'impl .*panic 0x11' "$OUT/c27_evm_overflow/run/campaign.log" \

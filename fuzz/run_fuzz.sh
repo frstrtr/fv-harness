@@ -122,16 +122,27 @@ verdict() { # verdict EXIT VERDICT DETAIL
   jq -n --arg v "$v" --arg draft "$([ "$draft" -eq 1 ] && echo "$DRAFT_STAMP")" --argjson e "$1" --arg d "$3" --arg t "$target" --arg runs "${runs:-}" \
     --arg secs "${secs:-}" --arg corpus "$corpus" --arg impl "${impl:-default}" \
     --arg lock "$(sha256sum "$lock" | cut -d' ' -f1)" --arg el "${elapsed:-}" \
-    --arg mm "$(grep -m1 'diff-oracle: MISMATCH' "$RUN/campaign.log" 2>/dev/null)" \
+    --arg mm "$(cat "$RUN/campaign.log" "$RUN/merge.log" 2>/dev/null | grep -m1 'diff-oracle: MISMATCH')" \
     --arg art "$(ls "$RUN"/artifacts/ 2>/dev/null | head -1)" \
     --arg stats "$(grep -E '^(stat::number_of_executed_units|stat::average_exec_per_sec|stat::new_units_added)' "$RUN/campaign.log" 2>/dev/null | tr '\n' ' ')" \
-    --argjson vend "${VENDORED_JSON:-{\}}" --argjson cls "${CLASSES_JSON:-null}" --argjson evm "${EVM_JSON:-null}" \
+    --argjson vend "${VENDORED_JSON:-{\}}" --argjson cls "${CLASSES_JSON:-null}" --argjson evm "${EVM_JSON:-null}" --arg lang "$lang" \
     --argjson lim "{\"timeout_s\":$T_OUT,\"rss_limit_mb\":$RSS_MB,\"malloc_limit_mb\":$MAL_MB,\"report_slow_units_s\":$SLOW_S,\"max_len\":${MAX_LEN:-null},\"len_control\":${LEN_CTL:-null}}" \
     --arg slow "$(ls "$RUN"/artifacts/ 2>/dev/null | grep '^slow-unit-' | tr '\n' ' ')" \
-    '(if $draft != "" then {draft:$draft} else {} end) + {verdict:$v, exit:$e, detail:$d, target:$t, runs:$runs, max_total_time:$secs, impl_dir:$impl,
+    '(if $draft != "" then {draft:$draft} else {} end) + {lang:$lang, verdict:$v, exit:$e, detail:$d, target:$t, runs:$runs, max_total_time:$secs, impl_dir:$impl,
       corpus:$corpus, lock_digest:$lock, campaign_seconds:$el, mismatch:$mm, artifact:$art, stats:$stats,
       vendored:$vend, classes:$cls, evm:$evm, limits:$lim, slow_units:($slow | split(" ") | map(select(. != "")))}' \
-    > "$RUN/fuzz.json"
+    > "$RUN/fuzz.json.tmp"
+  # The record is part of the verdict: unless it was written completely (jq succeeded, the file is not
+  # empty and has a verdict), the run is ERROR whatever the verdict would have been.
+  local jrc=$?
+  if [ $jrc -ne 0 ] || [ ! -s "$RUN/fuzz.json.tmp" ] || ! jq -e '.verdict' "$RUN/fuzz.json.tmp" > /dev/null 2>&1; then
+    echo "ERROR: fuzz.json could not be written (jq exit $jrc); the intended verdict was $v (exit $1): $3" >&2
+    rm -f "$RUN/fuzz.json.tmp"
+    printf '{"verdict": "ERROR", "exit": 3, "detail": "fuzz.json could not be written (jq exit %s)"}\n' "$jrc" > "$RUN/fuzz.json"
+    note "fuzz verdict ERROR (exit 3): fuzz.json not written (intended $v)"
+    exit 3
+  fi
+  mv "$RUN/fuzz.json.tmp" "$RUN/fuzz.json"
   note "fuzz verdict $v (exit $1): $3"
   exit "$1"
 }
@@ -257,7 +268,8 @@ case "$lang" in
     fi
     so="$RUN/build/lib${target}_oracle.so"; [ -f "$so" ] || verdict 3 ERROR "no oracle library $so"
     BIN="$RUN/fuzz-$target"
-    printf '#!/bin/sh\nexec env FV_BINDING=%q FV_IMPL_DIR=%q FV_ORACLE_SO=%q %q -I %q "$@"\n' \
+    # FV_SELF: libFuzzer re-executes argv[0] for the corpus merge; fv_diff.py makes that this wrapper.
+    printf '#!/bin/sh\nexec env FV_SELF=%q FV_BINDING=%q FV_IMPL_DIR=%q FV_ORACLE_SO=%q %q -I %q "$@"\n' "$BIN" \
       "$bnd" "$impl_dir" "$so" "$py" "$HERE/python/fv_diff.py" > "$BIN"
     chmod +x "$BIN"
     impl="$impl_dir"
@@ -347,9 +359,32 @@ if [ $rc -ne 0 ]; then
 fi
 
 # 5. Corpus persistence.
+# The merge re-runs every input in a fresh inner process. A failure there is a finding: libFuzzer would
+# retry without that input and report success, so the run must not PASS. And with inputs to merge, the
+# merge must complete in one attempt, or something went wrong that it did not report.
 if [ "$merge" -eq 1 ]; then
-  capped "$BIN" "${LIMITS[@]}" -merge=1 "$corpus" "$RUN/new_corpus" > "$RUN/merge.log" 2>&1 || verdict 3 ERROR "corpus merge failed"
+  a0=$(find "$RUN/artifacts" -maxdepth 1 -type f ! -name 'slow-unit-*' | wc -l)
+  nin=$(find "$corpus" "$RUN/new_corpus" -maxdepth 1 -type f | wc -l)
+  capped "$BIN" "${LIMITS[@]}" -artifact_prefix="$RUN/artifacts/merge-" -merge=1 "$corpus" "$RUN/new_corpus" > "$RUN/merge.log" 2>&1
+  mrc=$?
   classify_line_in "$RUN/merge.log" && verdict 3 ERROR "the merge ran a classify build"
+  a1=$(find "$RUN/artifacts" -maxdepth 1 -type f ! -name 'slow-unit-*' | wc -l)
+  # A finding (mismatch, sanitizer, panic, exception, timeout, OOM, deadly signal) or a new artifact: FAIL,
+  # the reproducer joins the corpus. An inner process that died without a finding: ERROR.
+  if grep -qE 'diff-oracle: (MISMATCH|DOMAIN)|ERROR: (AddressSanitizer|LeakSanitizer|UndefinedBehaviorSanitizer|libFuzzer)|runtime error:|panicked at|Uncaught Python exception' "$RUN/merge.log" \
+     || [ "$a1" -gt "$a0" ]; then
+    keep_reproducers
+    classify findings
+    kind=$(fail_kind "$RUN/merge.log")
+    verdict 1 FAIL "during the corpus merge: ${kind:-a new artifact in the inner merge process} ($(grep -c '^MERGE-OUTER: attempt' "$RUN/merge.log") attempt(s); the campaign itself passed)"
+  fi
+  if grep -q 'caused a failure at the previous merge step' "$RUN/merge.log"; then
+    verdict 3 ERROR "an inner merge process failed without a finding: $(grep -m1 'caused a failure at the previous merge step' "$RUN/merge.log" | cut -c1-200) ($(grep -c '^MERGE-OUTER: attempt' "$RUN/merge.log") attempts)"
+  fi
+  [ $mrc -eq 0 ] || verdict 3 ERROR "corpus merge failed (exit $mrc)"
+  if [ "$nin" -gt 0 ] && ! { grep -qx 'MERGE-OUTER: successful in 1 attempt(s)' "$RUN/merge.log" && grep -qE '^MERGE-OUTER: [0-9]+ new files' "$RUN/merge.log"; }; then
+    verdict 3 ERROR "corpus merge did not complete in one attempt: $(grep -m1 -vE '^(MERGE-OUTER|INFO|WARNING|#)' "$RUN/merge.log" | cut -c1-160) ($(grep -c '^MERGE-OUTER: attempt' "$RUN/merge.log") attempts)"
+  fi
 fi
 # 6. Edge-case classification (labels only).
 classify corpus

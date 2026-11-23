@@ -162,7 +162,8 @@ while read -r id res detail; do
 done < "$OUT/fuzz.out"
 grep -qE "^c1_fuzz " "$OUT/fuzz.out" && grep -qE "^c6_cpp_drift " "$OUT/fuzz.out" && grep -qE "^c7_lsan_leak " "$OUT/fuzz.out" && grep -qE "^c8_vendored_tamper " "$OUT/fuzz.out" && grep -qE "^c9_edge_not_exercised " "$OUT/fuzz.out" \
    && grep -qE "^c10_leak_class " "$OUT/fuzz.out" && grep -qE "^c11_hang " "$OUT/fuzz.out" && grep -qE "^c12_growth " "$OUT/fuzz.out" \
-   && grep -qE "^c13_classify_env " "$OUT/fuzz.out" && grep -qE "^c14_zero_limits " "$OUT/fuzz.out" && grep -qE "^c30_draft_not_countable " "$OUT/fuzz.out" && grep -qE "^c32_len_limits " "$OUT/fuzz.out" ||
+   && grep -qE "^c13_classify_env " "$OUT/fuzz.out" && grep -qE "^c14_zero_limits " "$OUT/fuzz.out" && grep -qE "^c30_draft_not_countable " "$OUT/fuzz.out" && grep -qE "^c32_len_limits " "$OUT/fuzz.out" \
+   && grep -qE "^c48_record_failure " "$OUT/fuzz.out" && grep -qE "^c53_merge_failure " "$OUT/fuzz.out" && grep -qE "^c54_merge_inner_exit " "$OUT/fuzz.out" && grep -qE "^c59_merge_inner_start " "$OUT/fuzz.out" ||
   report fuzz_controls WRONG "runner produced no verdict lines (see $OUT/fuzz.out)"
 
 # Languages beyond C++ (docs/LANGUAGES.md): SKIP when a toolchain is absent.
@@ -182,8 +183,8 @@ grep -qE "^c15_rust_clean " "$OUT/lang.out" ||
 D20="$OUT/c20_required_lang"; mkdir -p "$D20"
 FV_LANG_CONTROLS="rust python evm" FV_REQUIRE_LANGS="rust python evm" FV_RUST_HOME="$D20/no-toolchain" FV_PY="$D20/no-python" FV_SOLC="$D20/no-solc" "$ROOT/tests/harness_fv_controls/run_lang_controls.sh" "$D20/req" > "$D20/req.out" 2>&1; r1=$?
 FV_LANG_CONTROLS="rust python evm" FV_REQUIRE_LANGS= FV_RUST_HOME="$D20/no-toolchain" FV_PY="$D20/no-python" FV_SOLC="$D20/no-solc" "$ROOT/tests/harness_fv_controls/run_lang_controls.sh" "$D20/opt" > "$D20/opt.out" 2>&1; r2=$?
-if [ $r1 -ne 0 ] && [ "$(grep -c ' WRONG required language' "$D20/req.out")" = 14 ] && [ $r2 -eq 0 ] && [ "$(grep -c ' SKIP ' "$D20/opt.out")" = 14 ]; then
-  report c20_required_lang OK "required (rust, python, evm) + no toolchains: 14 WRONG (exit $r1); not required: 14 SKIP (exit 0)"
+if [ $r1 -ne 0 ] && [ "$(grep -c ' WRONG required language' "$D20/req.out")" = 15 ] && [ $r2 -eq 0 ] && [ "$(grep -c ' SKIP ' "$D20/opt.out")" = 15 ]; then
+  report c20_required_lang OK "required (rust, python, evm) + no toolchains: 15 WRONG (exit $r1); not required: 15 SKIP (exit 0)"
 else
   report c20_required_lang WRONG "required exit=$r1 [$(head -1 "$D20/req.out")]; optional exit=$r2 [$(head -1 "$D20/opt.out")]"
 fi
