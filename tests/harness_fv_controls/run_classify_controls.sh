@@ -15,10 +15,13 @@
 #                      the c68/c69 replay logs): (a) Rust and (b) Python, a predicate edited after the run:
 #                      error naming that class; (c) Rust and (d) Python, the file changed elsewhere (a
 #                      comment): error naming the sha256; (e) a classes.py with classes built in a loop (no
-#                      literal name and lambda, so no source to show): classes.error, verdict PASS
+#                      literal name and lambda, so no source to show): classes.error, verdict PASS; (f) on a FAIL
+#                      run the reproducers are classified against the same checked sources, with no
+#                      classification error (Rust drift)
 #   c75_py_classify_isolation  the labels-only replay can neither weaken nor reach the verdict: (a) FV_CLASSIFY,
 #                      FV_CLASSIFY_RENDER and FV_CLASSIFY_TIME_IMPL exported, the drift implementation still
-#                      FAILs as a mismatch; (b) a classes.py that raises at import: the clean run PASSes with
+#                      FAILs as a mismatch, and its reproducer is classified against the same sources with no
+#                      classification error; (b) a classes.py that raises at import: the clean run PASSes with
 #                      classes.error naming it, the drift run still FAILs; (c) the verdict wrapper and
 #                      fv_diff.py name neither fv_classify.py, fv_sink nor FV_CLASSIFY; (d) the replay never
 #                      imports the implementation (an implementation that records each import: none from
@@ -139,6 +142,8 @@ if [ "$have_rust" = 1 ] && [ "$have_py" = 1 ] && [ -s "$OUT/c68_gap_rust/run/cla
   ea=$(report_err "$OUT/c68_gap_rust" "$T/a.rs" "$rs_sha"); eb=$(report_err "$OUT/c69_gap_py" "$T/b.py")
   ec=$(report_err "$OUT/c68_gap_rust" "$T/c.rs" "$rs_sha"); ed=$(report_err "$OUT/c69_gap_py" "$T/d.py")
   e0=$(report_err "$OUT/c68_gap_rust" "$rs" "$rs_sha"); e1=$(report_err "$OUT/c69_gap_py" "$OUT/ex69/fuzz/classes.py")
+  campaign c72f_rust_fail rust "$OUT/ex68" impl-drift diff_risk "$LOCK" "$LEAN" --runs 32000 --time 900; rcf72=$?
+  jf72="$OUT/c72f_rust_fail/run/fuzz.json"
   X="$OUT/ex72"; copy_example "$P" "$X"
   cat >> "$X/fuzz/classes.py" <<'PYEOF'
 
@@ -149,10 +154,11 @@ PYEOF
   rce=$?; je="$OUT/c72e_loop_classes/run/fuzz.json"
   if [[ "$ea" == *"differ from what ran"*"q at or above 2^32"* ]] && [[ "$eb" == *"differ from what ran"*"q at or above 2^32"* ]] \
      && [[ "$ec" == *"sha256"* ]] && [[ "$ed" == *"sha256"* ]] && [ "$e0" = none ] && [ "$e1" = none ] \
-     && [ $rce -eq 0 ] && jq -e '.verdict == "PASS" and (.classes.error // "" | contains("a string name and a lambda"))' "$je" > /dev/null; then
-    echo "c72_class_source_mismatch OK unchanged files: no error; (a) rust: ${ea:0:150}; (b) py: ${eb:0:110}; (c) ${ec:0:120}; (d) ${ed:0:100}; (e) PASS, $(jq -r '.classes.error | .[0:110]' "$je")"
+     && [ $rce -eq 0 ] && jq -e '.verdict == "PASS" and (.classes.error // "" | contains("a string name and a lambda"))' "$je" > /dev/null \
+     && [ $rcf72 -eq 1 ] && jq -e '.classes.error == null and (.classes.finding_classes | length) >= 1' "$jf72" > /dev/null; then
+    echo "c72_class_source_mismatch OK unchanged files: no error; (a) rust: ${ea:0:150}; (b) py: ${eb:0:110}; (c) ${ec:0:120}; (d) ${ed:0:100}; (e) PASS, $(jq -r '.classes.error | .[0:110]' "$je"); (f) a Rust FAIL: its reproducers classified, no error"
   else
-    echo "c72_class_source_mismatch WRONG unchanged=[$e0|$e1] a=[$ea] b=[$eb] c=[$ec] d=[$ed] e: exit=$rce $(jq -c '{verdict, err: .classes.error}' "$je" 2>/dev/null)"; fails=1
+    echo "c72_class_source_mismatch WRONG unchanged=[$e0|$e1] a=[$ea] b=[$eb] c=[$ec] d=[$ed] e: exit=$rce $(jq -c '{verdict, err: .classes.error}' "$je" 2>/dev/null) f: exit=$rcf72 [$(jq -r '.classes.error // "none"' "$jf72" 2>/dev/null | cut -c1-80)]"; fails=1
   fi
 else
   echo "c72_class_source_mismatch $([ "$have_rust$have_py" = 11 ] && echo "WRONG c68/c69 left no classify log" || echo "SKIP needs the rust and python toolchains")"
@@ -209,15 +215,16 @@ PYEOF
       te="ok: PASS, $(jq -r '.classes.error | .[0:100]' "$je"); driver_starts $(jq -r .tron_tvm.processes.driver_starts "$je")"
     else te="WRONG exit=$rce $(jq -c '{verdict, err: .classes.error, p: .tron_tvm.processes}' "$je" 2>/dev/null)"; fi
   fi
-  if [ $rca -eq 1 ] && jq -e '.detail | contains("oracle/implementation mismatch")' "$ja" > /dev/null \
+  if [ $rca -eq 1 ] && jq -e '(.detail | contains("oracle/implementation mismatch")) and .classes.error == null
+       and (.classes.finding_classes | length) >= 1 and (.classes.classes_source_sha256 | test("^[0-9a-f]{64}$"))' "$ja" > /dev/null \
      && [ $rcb -eq 0 ] && jq -e '.verdict == "PASS" and (.classes.error // "" | contains("c75: classes.py raises"))' "$jb" > /dev/null \
      && [ $rcb2 -eq 1 ] && jq -e '.detail | contains("oracle/implementation mismatch")' "$jb2" > /dev/null \
      && [ $rcf -eq 0 ] && jq -e '.verdict == "PASS" and (.classes.error // "" | contains("classification replay exited") and contains("retention: the generation exited"))' "$jf" > /dev/null \
      && [ -z "$leak" ] && [ $rcd -eq 0 ] && [ "$n_v" -gt 0 ] && [ "$n_c" -eq 0 ] && [[ "$te" != WRONG* ]] \
      && { [ "$te" != SKIP ] || [[ " ${FV_REQUIRE_LANGS:-} " != *" tron-tvm "* ]]; }; then
-    echo "c75_py_classify_isolation OK (a) env exported, drift still FAIL ($(jq -r .detail "$ja")); (b) raising classes.py: PASS with error [$(jq -r '.classes.error | .[0:70]' "$jb")], drift FAIL; (c) verdict wrapper/driver name no classify path; (d) implementation imported $n_v time(s) by the verdict path, 0 by the replay; (e) tron-tvm $te; (f) a describe() raising mid-replay: PASS, [$(jq -r '.classes.error | .[0:90]' "$jf")]"
+    echo "c75_py_classify_isolation OK (a) env exported, drift still FAIL ($(jq -r .detail "$ja")), its reproducer classified with no error ($(jq -c '.classes.finding_classes | to_entries[0].value' "$ja" | cut -c1-60)); (b) raising classes.py: PASS with error [$(jq -r '.classes.error | .[0:70]' "$jb")], drift FAIL; (c) verdict wrapper/driver name no classify path; (d) implementation imported $n_v time(s) by the verdict path, 0 by the replay; (e) tron-tvm $te; (f) a describe() raising mid-replay: PASS, [$(jq -r '.classes.error | .[0:90]' "$jf")]"
   else
-    echo "c75_py_classify_isolation WRONG a: exit=$rca [$(jq -r .detail "$ja" 2>/dev/null)] b: exit=$rcb [$(jq -c '{verdict, err: .classes.error}' "$jb" 2>/dev/null)] b2: exit=$rcb2 c: [$leak] d: exit=$rcd verdict=$n_v classify=$n_c e: $te f: exit=$rcf $(jq -c '{verdict, err: .classes.error}' "$jf" 2>/dev/null | cut -c1-200)"; fails=1
+    echo "c75_py_classify_isolation WRONG a: exit=$rca [$(jq -r .detail "$ja" 2>/dev/null)] a-cls=[$(jq -r '.classes.error // "none"' "$ja" 2>/dev/null | cut -c1-80)] b: exit=$rcb [$(jq -c '{verdict, err: .classes.error}' "$jb" 2>/dev/null)] b2: exit=$rcb2 c: [$leak] d: exit=$rcd verdict=$n_v classify=$n_c e: $te f: exit=$rcf $(jq -c '{verdict, err: .classes.error}' "$jf" 2>/dev/null | cut -c1-200)"; fails=1
   fi
 else absent python "$PY" c75_py_classify_isolation; fi
 

@@ -183,6 +183,20 @@ def main():
 
     headers, errors = [], []
     recs = read_log(pathlib.Path(a.log), headers, errors)
+    # On FAIL the reproducers are classified instead of the corpus: their replay's class header (the
+    # predicates that ran) and its errors count exactly like the corpus replay's.
+    finding_classes = {}
+    if a.findings:
+        with tempfile.TemporaryDirectory() as td:
+            log = pathlib.Path(td) / "findings.jsonl"
+            e = dict(env, FV_CLASSIFY=str(log))
+            e.pop("FV_CLASSIFY_RENDER", None)
+            e.pop("FV_CLASSIFY_TIME_IMPL", None)  # a hanging reproducer must not hang the report
+            subprocess.run([a.bin, "-runs=0", "-timeout=30", *a.findings], capture_output=True, env=e, timeout=600)
+            fr = read_log(log, headers, errors)
+            for f in a.findings:
+                h = fnv1a(pathlib.Path(f).read_bytes())
+                finding_classes[pathlib.Path(f).name] = sorted(fr.get(h, {}).get("hits", {}))
     header = pathlib.Path(a.classes_header) if a.classes_header else None
     cfile = pathlib.Path(a.classes_file) if a.classes_file else (header if header and header.is_file() else None)
     src_error = None
@@ -300,18 +314,7 @@ def main():
                (f"; predicate: `{sources.get(c.split(': ', 1)[1], '')}`" if kind(c) == "domain" else ""),
                "", "```text"] + excerpt(blocks.get(h, ["(not rendered)"]), first) + ["```", ""]
 
-    finding_classes = {}
     if a.findings:
-        with tempfile.TemporaryDirectory() as td:
-            log = pathlib.Path(td) / "findings.jsonl"
-            e = dict(env, FV_CLASSIFY=str(log))
-            e.pop("FV_CLASSIFY_RENDER", None)
-            e.pop("FV_CLASSIFY_TIME_IMPL", None)  # a hanging reproducer must not hang the report
-            subprocess.run([a.bin, "-runs=0", "-timeout=30", *a.findings], capture_output=True, env=e, timeout=600)
-            fr = read_log(log)
-            for f in a.findings:
-                h = fnv1a(pathlib.Path(f).read_bytes())
-                finding_classes[pathlib.Path(f).name] = sorted(fr.get(h, {}).get("hits", {}))
         md += ["## Findings and their classes", ""] + [f"- `{f}`: {', '.join(c) or 'regular'}"
                                                        for f, c in finding_classes.items()] + [""]
 
