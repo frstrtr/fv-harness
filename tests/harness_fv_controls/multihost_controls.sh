@@ -193,14 +193,20 @@ EOF
   export FV_WORKER_GLIBCXX_MAX_LOCALTEST="$(strings "${lsc:-/usr/lib/x86_64-linux-gnu/libstdc++.so.6}" | grep -oE '^GLIBCXX_[0-9.]+$' | sort -V | tail -1 | sed 's/^GLIBCXX_//')"
   F46="$OUT/c46-fake"; fake_guards "$F46"
   campaign c46_ssh --jobs 1 --remote ssh:LOCALTEST:1 --runs 20000; src=$?
-  # c58: two runs named "run" at once on this worker (the first long enough to overlap the second).
+  # c58: two runs named "run" at once on this worker. The first runs on TIME, not on an execution budget
+  # (this control is about overlap, not search): 600 s of campaign outlasts the second run's build and
+  # campaign on any host speed. Overlap is observed, not assumed: a watcher records whether two fv-run-*
+  # work dirs existed on the worker at the same moment while the second run ran.
   rm -rf "${OUT:?}/c58a" "${OUT:?}/c58b"; mkdir -p "$OUT/c58a" "$OUT/c58b"; cp -r "$CPP/corpus" "$OUT/c58a/corpus"; cp -r "$CPP/corpus" "$OUT/c58b/corpus"
   "$RF" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$CPP" --target diff_transfer --corpus "$OUT/c58a/corpus" --no-merge \
-    --jobs 1 --remote ssh:LOCALTEST:1 --runs 400000 --out "$OUT/c58a/run" > "$OUT/c58a/run_fuzz.out" 2>&1 & p58=$!
+    --jobs 1 --remote ssh:LOCALTEST:1 --time 600 --out "$OUT/c58a/run" > "$OUT/c58a/run_fuzz.out" 2>&1 & p58=$!
   for i in $(seq 1 240); do [ -n "$(ls -A "$S/fv-work" 2>/dev/null)" ] && break; sleep 0.5; done
   seen58=$(ls -A "$S/fv-work" 2>/dev/null | tr '\n' ' ')
+  : > "$OUT/c58-both"
+  ( while :; do [ "$(ls -A "$S/fv-work" 2>/dev/null | grep -c '^fv-run-')" -ge 2 ] && { ls -A "$S/fv-work" | tr '\n' ' ' > "$OUT/c58-both"; break; }; sleep 0.5; done ) & w58=$!
   "$RF" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$CPP" --target diff_transfer --corpus "$OUT/c58b/corpus" --no-merge \
     --jobs 1 --remote ssh:LOCALTEST:1 --runs 20000 --out "$OUT/c58b/run" > "$OUT/c58b/run_fuzz.out" 2>&1; r58b=$?
+  kill $w58 2>/dev/null; wait $w58 2>/dev/null; both58=$(cat "$OUT/c58-both")
   alive58=$(kill -0 $p58 2>/dev/null && echo yes || echo no)
   wait $p58; r58a=$?
   stop_fake "$F46"; J="$OUT/c46_ssh/run/fuzz.json"; rid="fv-run"
@@ -222,11 +228,11 @@ fi
 if [ -n "$ssh_skip" ]; then
   echo "c58_remote_same_name SKIPPED $ssh_skip (the same-name ssh case needs the test sshd of c46)"
 else
-  if [ -n "${seen58% }" ] && [ "$alive58" = yes ] && [ $r58a -eq 0 ] && [ $r58b -eq 0 ] \
+  if [ -n "${seen58% }" ] && [ "$alive58" = yes ] && [ -n "${both58% }" ] && [ $r58a -eq 0 ] && [ $r58b -eq 0 ] \
      && jq -e '.verdict == "PASS"' "$OUT/c58a/run/fuzz.json" > /dev/null && jq -e '.verdict == "PASS"' "$OUT/c58b/run/fuzz.json" > /dev/null; then
-    echo "c58_remote_same_name OK two runs named 'run' at once on one worker: both PASS (first's work dir ${seen58% } while the second ran)"
+    echo "c58_remote_same_name OK two runs named 'run' at once on one worker: both PASS (work dirs at the same moment: ${both58% })"
   else
-    echo "c58_remote_same_name WRONG first exit=$r58a [$(jq -r .detail "$OUT/c58a/run/fuzz.json" 2>/dev/null | cut -c1-90)] second exit=$r58b [$(jq -r .detail "$OUT/c58b/run/fuzz.json" 2>/dev/null | cut -c1-90)] overlap=$alive58 seen=[$seen58]"; fails=1
+    echo "c58_remote_same_name WRONG first exit=$r58a [$(jq -r .detail "$OUT/c58a/run/fuzz.json" 2>/dev/null | cut -c1-90)] second exit=$r58b [$(jq -r .detail "$OUT/c58b/run/fuzz.json" 2>/dev/null | cut -c1-90)] overlap=$alive58 seen=[$seen58] both=[$both58]"; fails=1
   fi
 fi
 
