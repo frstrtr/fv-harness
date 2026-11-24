@@ -187,6 +187,10 @@ EOF
   ver=$(/usr/sbin/sshd -V 2>&1 | head -1)
   export FV_WORKER_SSH_LOCALTEST="-p $port -i $S/client_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=$S/known_hosts -o StrictHostKeyChecking=accept-new $(id -un)@127.0.0.1"
   export FV_WORKER_ROOT_LOCALTEST="$S/fv-work" FV_WORKER_QUOTA_PCT=100 FV_WORKER_MEMMAX=6G
+  # The worker is this host: its glibc / GLIBCXX target is this host's own (the gate checks the bundle against it).
+  lsc=$(ldconfig -p 2>/dev/null | awk '/libstdc\+\+\.so\.6 .*x86-64/ { print $NF; exit }')
+  export FV_WORKER_GLIBC_MAX_LOCALTEST="$(getconf GNU_LIBC_VERSION | awk '{ print $2 }')"
+  export FV_WORKER_GLIBCXX_MAX_LOCALTEST="$(strings "${lsc:-/usr/lib/x86_64-linux-gnu/libstdc++.so.6}" | grep -oE '^GLIBCXX_[0-9.]+$' | sort -V | tail -1 | sed 's/^GLIBCXX_//')"
   F46="$OUT/c46-fake"; fake_guards "$F46"
   campaign c46_ssh --jobs 1 --remote ssh:LOCALTEST:1 --runs 20000; src=$?
   # c58: two runs named "run" at once on this worker (the first long enough to overlap the second).

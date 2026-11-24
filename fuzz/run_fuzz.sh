@@ -305,6 +305,19 @@ for src in site cli; do
   done
 done
 [ -z "$bad_args" ] || verdict 3 ERROR "cmake args refused: ${bad_args% }"
+# The build sysroot (fuzz/sysroot/): with FV_BUILD_SYSROOT set on the gate host, the C/C++ build links
+# against that pinned Ubuntu 24.04 tree (glibc 2.39) and libstdc++/libgcc statically, so what the gate
+# ships runs on older worker hosts. The tree must hash to FV_BUILD_SYSROOT_SHA256 (config/pins.env).
+SYSROOT_SHA=""
+if [ -n "${FV_BUILD_SYSROOT:-}" ]; then
+  [ -d "$FV_BUILD_SYSROOT" ] || verdict 3 ERROR "FV_BUILD_SYSROOT $FV_BUILD_SYSROOT is not a directory"
+  SYSROOT_SHA=$( (cd "$FV_BUILD_SYSROOT" && { find . -type f ! -name SYSROOT.sha256 -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+                                                find . -type l -printf 'link %p -> %l\n' | LC_ALL=C sort; }) | sha256sum | cut -d' ' -f1)
+  [ "$SYSROOT_SHA" = "${FV_BUILD_SYSROOT_SHA256:-}" ] \
+    || verdict 3 ERROR "the build sysroot $FV_BUILD_SYSROOT (sha256 $SYSROOT_SHA) is not the pinned one (${FV_BUILD_SYSROOT_SHA256:-unset})"
+  cfg+=(-DCMAKE_SYSROOT="$FV_BUILD_SYSROOT" -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+        -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc")
+fi
 BIN_CLS=""
 case "$lang" in
   cpp)
@@ -626,6 +639,18 @@ if [ -n "$remote" ]; then
   cp "$HERE/worker/fv_worker.sh" "$HERE/worker/fv_guard.sh" "$BD/"; find "$corpus" -maxdepth 1 -type f -exec cp -t "$BD/corpus" {} +
   { echo "glibc_max $(objdump -T "$BD/bin/fuzzer" "$BD/lib/libleanshared.so" | grep -oE 'GLIBC_[0-9.]+' | sed 's/GLIBC_//' | sort -V | tail -1)"
     echo "glibcxx_max $(objdump -T "$BD/bin/fuzzer" | grep -oE 'GLIBCXX_[0-9.]+' | sed 's/GLIBCXX_//' | sort -V | tail -1)"; } > "$BD/REQUIRES"
+  # The worker's target, checked here, before anything is shipped or any ssh connection opens: an ssh
+  # worker must declare it (FV_WORKER_GLIBC_MAX_<NAME>, FV_WORKER_GLIBCXX_MAX_<NAME>); a local one may
+  # (_LOCAL). A bundle needing newer symbol versions than the target is BLOCKED.
+  tn=${rname:-LOCAL}; gv="FV_WORKER_GLIBC_MAX_$tn"; xv="FV_WORKER_GLIBCXX_MAX_$tn"
+  need_g=$(sed -n 's/^glibc_max //p' "$BD/REQUIRES"); need_x=$(sed -n 's/^glibcxx_max //p' "$BD/REQUIRES")
+  if [ -n "$rname" ] && { [ -z "${!gv:-}" ] || [ -z "${!xv:-}" ]; }; then
+    verdict 3 ERROR "worker $rname has no glibc / libstdc++ target ($gv, $xv in config/hosts.env): the gate checks a bundle against it before shipping"
+  fi
+  newer() { [ -n "$1" ] && [ -n "$2" ] && [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }  # newer A B: A > B
+  if newer "$need_g" "${!gv:-}" || newer "$need_x" "${!xv:-}"; then
+    verdict 2 BLOCKED "the bundle needs glibc ${need_g:-none} / GLIBCXX ${need_x:-none}, worker ${rname:-local} provides ${!gv:-?} / ${!xv:-?} (build with the pinned sysroot: FV_BUILD_SYSROOT)"
+  fi
   (cd "$BD" && find . -type f ! -name MANIFEST.sha256 -printf '%P\n' | LC_ALL=C sort | xargs sha256sum > MANIFEST.sha256)
   built_sha=$(sha256sum < "$BD/MANIFEST.sha256" | cut -d' ' -f1)
   tar -cf "$RUN/bundle.tar" -C "$RUN" bundle
@@ -691,9 +716,12 @@ if [ -n "$rname" ]; then
   # Guard overrides (FV_GUARD_*: fake probes and thresholds) reach the worker only if the gate's
   # environment sets them, and fuzz.json lists their names: a production run shows none.
   genv=(); while IFS= read -r v; do [[ "$v" =~ ^FV_GUARD_[A-Z0-9_]+$ ]] && genv+=("$v=${!v}"); done < <(compgen -e | LC_ALL=C sort)
+  # The lease's restart unit for this worker (config/hosts.env), if any: a site policy, not an override.
+  lrv="FV_WORKER_RESTART_UNIT_$rname"; lru="${!lrv:-}"
+  [ -z "$lru" ] || [[ "$lru" =~ ^[A-Za-z0-9@._-]+\.(service|timer)$ ]] || verdict 3 ERROR "$lrv '$lru' is not a systemd unit name"
   GUARD_OVERRIDES=$(printf '%s\n' "${genv[@]%%=*}" | jq -Rsc 'split("\n") | map(select(. != ""))')
   rcmd="tar -xf $(q "$RD/bundle.tar") -C $(q "$RD") && rm -f -- $(q "$RD/bundle.tar") && $(q env "${genv[@]}" FV_GUARDS="${FV_WORKER_GUARDS:-1}" \
-    FV_EXPECT_CPU_PCT="$quota" FV_EXPECT_MEM_BYTES="$memb" systemd-run --user --scope --quiet --unit="$unit" \
+    FV_EXPECT_CPU_PCT="$quota" FV_EXPECT_MEM_BYTES="$memb" FV_LEASE_RESTART_UNIT="$lru" systemd-run --user --scope --quiet --unit="$unit" \
     -p CPUQuota="$quota%" -p MemoryMax="$memb" -p RuntimeMaxSec="$maxsec" nice -n 19 ionice -c3 \
     bash "$RD/bundle/fv_worker.sh" "$RD/bundle" "$jobs" "$rk" "$rruns" "${secs:-}" "$seed0" "${LIMITS[@]}" "${LENS[@]}")"
   unit_started=1   # from here the scope may exist: cleanup stops it
@@ -747,7 +775,10 @@ if [ -n "$remote" ]; then
   RO="$RB/bundle/out"
   REMOTE_JSON=$(jq -c --arg t "$([ -n "$rname" ] && echo "ssh:$rname" || echo local)" --arg b "$given_sha" --arg bb "$built_sha" --argjson k "$rk" \
     --arg rrc "$rrc" --argjson go "${GUARD_OVERRIDES:-[]}" --slurpfile pz <(cat "$RO/pauses.jsonl" 2>/dev/null) '{transport: $t, workers: $k, exit: $rrc, guard_overrides: $go,
-    bundle_sha256: $b, built_sha256: $bb, worker_env: ., pauses: $pz}' "$RO/worker-env.json" 2>/dev/null \
+    bundle_sha256: $b, built_sha256: $bb, worker_env: ., pauses: $pz,
+    requires: {glibc: $ng, glibcxx: $nx}, target: {glibc: $tg, glibcxx: $tx}, build_sysroot_sha256: $sr,
+    lease: {restart_unit: $lru}}' --arg lru "${lru:-}" \
+    --arg ng "${need_g:-}" --arg nx "${need_x:-}" --arg tg "${!gv:-}" --arg tx "${!xv:-}" --arg sr "$SYSROOT_SHA" "$RO/worker-env.json" 2>/dev/null \
     || jq -nc --arg rrc "$rrc" --arg b "$given_sha" '{exit: $rrc, bundle_sha256: $b, worker_env: null}')
   if grep -q '^BLOCKED:' "$RUN/remote.log"; then
     verdict 2 BLOCKED "remote worker refused: $(grep -m1 '^BLOCKED:' "$RUN/remote.log" | sed 's/^BLOCKED: //' | cut -c1-200)"

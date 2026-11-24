@@ -62,9 +62,17 @@ printf '{"host": "%s", "nproc": %s, "glibc": "%s", "libstdcxx": "%s", "glibcxx_m
 : > "$O/batches.tsv"; : > "$O/pids"
 # Guards: a start gate, then the watcher beside the batches.
 if [ "${FV_GUARDS:-0}" = 1 ]; then
-  deadline=$(( $(date +%s) + ${FV_GUARD_START_WAIT:-1800} ))
-  until bash "$B/fv_guard.sh" --start-ok >> "$O/start-check" 2>&1; do
-    [ "$(date +%s)" -lt "$deadline" ] || { echo "BLOCKED: start condition not met: $(tail -1 "$O/start-check")"; exit 2; }
+  deadline=$(( $(date +%s) + ${FV_GUARD_START_WAIT:-1800} )); unreach_since=""
+  while :; do
+    bash "$B/fv_guard.sh" --start-ok >> "$O/start-check" 2>&1; src=$?
+    [ $src -eq 0 ] && break
+    now=$(date +%s)
+    if [ $src -eq 3 ]; then  # the chain node did not answer (a restart): retry, BLOCK after the limit
+      unreach_since=${unreach_since:-$now}
+      [ $((now - unreach_since)) -lt "${FV_GUARD_UNREACHABLE_MAX:-600}" ] \
+        || { echo "BLOCKED: chain node unreachable for $((now - unreach_since)) s at start ($(tail -1 "$O/start-check"))"; exit 2; }
+    else unreach_since=""; fi
+    [ "$now" -lt "$deadline" ] || { echo "BLOCKED: start condition not met: $(tail -1 "$O/start-check")"; exit 2; }
     sleep "${FV_GUARD_INTERVAL:-30}"
   done
   : > "$O/pauses.jsonl"
@@ -78,10 +86,20 @@ while :; do
   todo=0; for ((i = 0; i < k; i++)); do if [ -z "$runs" ] || [ "${remaining[$i]}" -gt 0 ]; then todo=1; fi; done
   if [ -n "$secs" ] && [ "$left_secs" -le 0 ]; then todo=0; fi
   [ $todo -eq 1 ] && [ $failed -eq 0 ] && [ $batch -lt 1000 ] || break
+  [ ! -e "$O/guard.block" ] || { echo "BLOCKED: $(cat "$O/guard.block"); batches stopped after $batch"; exit 2; }
   if [ "${FV_GUARDS:-0}" = 1 ] && ! kill -0 "$gpid" 2>/dev/null; then  # never run unguarded
     echo "BLOCKED: the guard watcher exited ($(tail -1 "$O/guard.log" 2>/dev/null | cut -c1-160)); batches stopped after $batch"; exit 2
   fi
-  while [ -e "$O/paused" ]; do sleep 1; kill -0 "${gpid:-$$}" 2>/dev/null || break; done   # the guard removes it at RESUME
+  while [ -e "$O/paused" ]; do
+    [ ! -e "$O/guard.block" ] || { echo "BLOCKED: $(cat "$O/guard.block"); batches stopped after $batch"; exit 2; }
+    sleep 1; kill -0 "${gpid:-$$}" 2>/dev/null || break
+  done   # the guard removes it at RESUME
+  # Checked again right before a batch starts: the guard may have BLOCKED or ended during the wait above
+  # (a batch must never start after either).
+  [ ! -e "$O/guard.block" ] || { echo "BLOCKED: $(cat "$O/guard.block"); batches stopped after $batch"; exit 2; }
+  if [ "${FV_GUARDS:-0}" = 1 ] && ! kill -0 "$gpid" 2>/dev/null; then
+    echo "BLOCKED: the guard watcher exited ($(tail -1 "$O/guard.log" 2>/dev/null | cut -c1-160)); batches stopped after $batch"; exit 2
+  fi
   extra_runs=$(( $(corpus_count) + 1 ))  # the corpus replay counts toward -runs; it is not counted as work
   t0=$(date +%s); : > "$O/pids.batch"
   for ((i = 0; i < k; i++)); do

@@ -67,6 +67,16 @@
 #                 never counted as failing artifacts.
 #   c63_out_lock   a second run on an --out another run is using is refused at once (ERROR, "another run
 #                 holds"), and the first run's verdict and record are intact.
+#   c66_chain_unreachable  a chain node that does not answer PAUSEs the campaign and is retried; only past
+#                 FV_GUARD_UNREACHABLE_MAX is the worker BLOCKED (tests/harness_fv_controls/c66_chain_unreachable.sh).
+#   c67_restart_window  the lease's restart window: a silent node during its scheduled restart resumes after
+#                 the short wait, every other pause after the long one (tests/harness_fv_controls/c67_restart_window.sh).
+#   c65_bundle_target  the gate checks a worker bundle against the worker's glibc / GLIBCXX target before
+#                 shipping: (a) an implementation calling a glibc 2.42 function, built without the sysroot,
+#                 for a worker declared 2.39: BLOCKED, no worker started; (b) the fixture built with the
+#                 pinned 2.39 sysroot: PASS, its bundle needs glibc <= 2.39 and no GLIBCXX; (c) the 2.42
+#                 caller with the sysroot: ERROR (it does not compile); (d) an ssh worker with no declared
+#                 target: ERROR before any ssh connection. SKIPPED without FV_BUILD_SYSROOT on the host.
 #   c59_merge_inner_start  the inner merge process exits at start, before any input (no input to blame;
 #                 libFuzzer exits 0 having merged nothing): ERROR "did not complete in one attempt".
 #   c30_draft_not_countable  a draft (an UNSIGNED spec_lock.sh manifest) can be validated with
@@ -328,6 +338,10 @@ fi
 if [ -f "$X39/bundle.tar" ]; then
   "$ROOT/tests/harness_fv_controls/c40_guards.sh" "$X39/bundle.tar" "${OUT:?}/c40" > "$OUT/c40.out" 2>&1 || fails=1
   grep -E '^c40_guards ' "$OUT/c40.out" || { echo "c40_guards WRONG no verdict line (see $OUT/c40.out)"; fails=1; }
+  "$ROOT/tests/harness_fv_controls/c66_chain_unreachable.sh" "$X39/bundle.tar" "${OUT:?}/c66" > "$OUT/c66.out" 2>&1 || fails=1
+  grep -E '^c66_chain_unreachable ' "$OUT/c66.out"   # run_controls.sh requires the line
+  "$ROOT/tests/harness_fv_controls/c67_restart_window.sh" "$X39/bundle.tar" "${OUT:?}/c67" > "$OUT/c67.out" 2>&1 || fails=1
+  grep -E '^c67_restart_window ' "$OUT/c67.out"   # run_controls.sh requires the line
 else
   echo "c40_guards WRONG no bundle from c39"; fails=1
 fi
@@ -417,5 +431,39 @@ if [ "$alive" = yes ] && [ $rb -eq 3 ] && grep -q 'another run holds' "$D63/b.ou
   echo "c63_out_lock OK a second run on a busy --out: refused (exit 3, $(grep -m1 -o 'another run holds[^:]*' "$D63/b.out")); the first run: PASS, its record intact"
 else
   echo "c63_out_lock WRONG second exit=$rb [$(tail -1 "$D63/b.out" | cut -c1-100)] overlap=$alive first exit=$ra $(jq -c '{verdict, runs}' "$D63/run/fuzz.json" 2>/dev/null)"; fails=1
+fi
+
+D65="${OUT:?}/c65"; rm -rf "${D65:?}"; mkdir -p "$D65"
+t65() { # t65 NAME IMPL [env...] : one --remote local:1 run of the fixture against IMPL
+  local n="$1" impl="$2"; shift 2; mkdir -p "$D65/$n"; cp -r "$CPP/corpus" "$D65/$n/corpus"
+  env "$@" "$ROOT/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$CPP" --target diff_transfer --corpus "$D65/$n/corpus" \
+    --no-merge --jobs 1 --remote local:1 --runs 2000 --impl-dir "$impl" --out "$D65/$n/run" > "$D65/$n/out" 2>&1; }
+TGT=(FV_WORKER_GLIBC_MAX_LOCAL=2.39 FV_WORKER_GLIBCXX_MAX_LOCAL=3.4.33)
+if [ -z "${FV_BUILD_SYSROOT:-}" ] || [ ! -d "${FV_BUILD_SYSROOT:-/nonexistent}" ]; then
+  echo "c65_bundle_target SKIPPED no build sysroot on this host (FV_BUILD_SYSROOT): fuzz/sysroot/install_sysroot.sh installs it"
+else
+  r65=""
+  t65 a "$ROOT/tests/harness_fv_controls/variants/c65_new_glibc" FV_BUILD_SYSROOT= "${TGT[@]}"; ra=$?   # empty and exported: overrides hosts.env
+  ja="$D65/a/run/fuzz.json"
+  [ $ra -eq 2 ] && jq -e '.verdict == "BLOCKED" and (.detail | test("the bundle needs glibc 2\\.(4[0-9])"))' "$ja" > /dev/null \
+    && [ ! -e "$D65/a/run/remote-local/bundle/out/worker-env.json" ] || r65+="(a) exit=$ra [$(jq -r .detail "$ja" 2>/dev/null | cut -c1-120)] "
+  t65 b "$ROOT/fixtures/conservation_cpp/impl" "${TGT[@]}"; rb=$?
+  jb="$D65/b/run/fuzz.json"
+  gb=$(jq -r '.remote.requires.glibc // ""' "$jb" 2>/dev/null); xb=$(jq -r '.remote.requires.glibcxx // "?"' "$jb" 2>/dev/null)
+  [ $rb -eq 0 ] && [ -n "$gb" ] && [ "$(printf '%s\n2.39\n' "$gb" | sort -V | tail -1)" = 2.39 ] && [ -z "$xb" ] \
+    && jq -e --arg s "$FV_BUILD_SYSROOT_SHA256" '.verdict == "PASS" and .remote.build_sysroot_sha256 == $s' "$jb" > /dev/null \
+    || r65+="(b) exit=$rb requires=$gb/$xb [$(jq -r .detail "$jb" 2>/dev/null | cut -c1-100)] "
+  t65 c "$ROOT/tests/harness_fv_controls/variants/c65_new_glibc" "${TGT[@]}"; rc_=$?
+  [ $rc_ -eq 3 ] && jq -e '.detail | test("build failed")' "$D65/c/run/fuzz.json" > /dev/null || r65+="(c) exit=$rc_ [$(jq -r .detail "$D65/c/run/fuzz.json" 2>/dev/null | cut -c1-100)] "
+  mkdir -p "$D65/d"; cp -r "$CPP/corpus" "$D65/d/corpus"
+  FV_WORKER_SSH_NOTARGET="-o BatchMode=yes -o ConnectTimeout=2 nobody@nonexistent.invalid" "$ROOT/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" \
+    --cmake-dir "$CPP" --target diff_transfer --corpus "$D65/d/corpus" --no-merge --jobs 1 --remote ssh:NOTARGET:1 --runs 2000 --out "$D65/d/run" > "$D65/d/out" 2>&1; rd=$?
+  [ $rd -eq 3 ] && jq -e '.detail | test("has no glibc / libstdc\\+\\+ target")' "$D65/d/run/fuzz.json" > /dev/null && [ ! -e "$D65/d/run/ssh-ctl" ] \
+    || r65+="(d) exit=$rd [$(jq -r .detail "$D65/d/run/fuzz.json" 2>/dev/null | cut -c1-100)] "
+  if [ -z "$r65" ]; then
+    echo "c65_bundle_target OK (a) glibc 2.42 caller, host build, 2.39 worker: BLOCKED before shipping [$(jq -r .detail "$ja" | cut -c1-90)]; (b) with the sysroot: PASS, bundle needs glibc $gb and no GLIBCXX; (c) the 2.42 caller with the sysroot: does not build; (d) ssh worker without a target: ERROR before ssh"
+  else
+    echo "c65_bundle_target WRONG $r65"; fails=1
+  fi
 fi
 exit $fails

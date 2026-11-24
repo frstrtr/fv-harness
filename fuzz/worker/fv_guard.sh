@@ -22,7 +22,12 @@
 #               (/proc)/<pid>/stat; a PID that vanishes during a window counts as busy for that window;
 #   host:       FV_GUARD_LOADAVG (/proc/loadavg), FV_GUARD_MEMINFO (/proc/meminfo).
 # Rules (the host's lease; thresholds overridable only for controls):
-#   START       head age <= 15 s, NTP synchronised, timestamp parsed;
+#   START       head age <= 15 s, NTP synchronised, timestamp parsed (--start-ok exits 3 when the node
+#               did not answer at all, 1 for any other refusal);
+#   unreachable the chain endpoint gives no answer (connection refused or timed out: an empty reply), as
+#               during the node's scheduled restarts: PAUSE at once and retry every FV_GUARD_INTERVAL;
+#               unreachable for FV_GUARD_UNREACHABLE_MAX (600) s without a break: BLOCK (the guard writes
+#               OUT_DIR/guard.block with the reason and the worker runner stops, BLOCKED);
 #   chain bad   head age > 60 s, NTP not synchronised, endpoint failed / timed out / unparsable, or the
 #               head advanced by fewer than 5 blocks since the previous chain check (every
 #               FV_GUARD_INTERVAL, 30 s);  chain good = head age <= 15 s with NTP;
@@ -32,12 +37,29 @@
 #               readings;
 #   RESUME      when the chain has been good for 600 s, inference calm for 300 s, the host good, and the
 #               current reading has no bad condition at all.
+#   restart window (a lease policy, only where the worker's lease names the chain node's restart unit,
+#               FV_LEASE_RESTART_UNIT): a pause that began with the node not answering, while that unit
+#               last started at most FV_GUARD_RESTART_WINDOW (300) s before, needs the chain good for only
+#               FV_GUARD_FAST_RESUME (120) s. Any other pause, and any case where the unit's start time
+#               cannot be read or parsed, keeps the 600 s rule. The PAUSE record names the branch and the
+#               timestamps compared. BLOCK after 600 s unreachable applies in both branches.
 set -uo pipefail
 IV="${FV_GUARD_INTERVAL:-30}"; CW="${FV_GUARD_CPU_WINDOW:-10}"
 AGE_BAD="${FV_GUARD_AGE_BAD:-60}"; AGE_GOOD="${FV_GUARD_AGE_GOOD:-15}"; MIN_BLOCKS="${FV_GUARD_MIN_BLOCKS:-5}"
 BUSY="${FV_GUARD_BUSY_PCT:-200}"; CALM="${FV_GUARD_CALM_PCT:-50}"
 LOAD_MAX="${FV_GUARD_LOAD_MAX:-48}"; MEM_MIN_KB="${FV_GUARD_MEM_MIN_KB:-41943040}"
 CHAIN_RESUME="${FV_GUARD_CHAIN_RESUME:-600}"; INFER_RESUME="${FV_GUARD_INFER_RESUME:-300}"
+UNREACH_MAX="${FV_GUARD_UNREACHABLE_MAX:-600}"
+RESTART_WINDOW="${FV_GUARD_RESTART_WINDOW:-300}"; FAST_RESUME="${FV_GUARD_FAST_RESUME:-120}"
+restart_ts() { # epoch seconds of the lease's restart unit's last start (read-only, no sudo), or nothing
+  [ -n "${FV_LEASE_RESTART_UNIT:-}" ] || return 0
+  local v
+  if [ -n "${FV_GUARD_RESTART_TS_CMD:-}" ]; then v=$(bash -c "$FV_GUARD_RESTART_TS_CMD" 2>/dev/null)
+  else v=$(systemctl show "$FV_LEASE_RESTART_UNIT" -p ExecMainStartTimestamp --value 2>/dev/null); fi
+  [ -n "$v" ] && [ "$v" != "n/a" ] || return 0
+  date -d "$v" +%s 2>/dev/null
+}
+resume_need=$CHAIN_RESUME
 PROC="${FV_GUARD_PROC:-/proc}"; HZ=$(getconf CLK_TCK)
 tron() { if [ -n "${FV_GUARD_TRON_CMD:-}" ]; then bash -c "$FV_GUARD_TRON_CMD"; else curl -s -m 5 http://127.0.0.1:8090/wallet/getnowblock; fi 2>/dev/null; }
 ntp() { if [ -n "${FV_GUARD_NTP_CMD:-}" ]; then bash -c "$FV_GUARD_NTP_CMD"; else timedatectl show -p NTPSynchronized --value; fi 2>/dev/null; }
@@ -53,14 +75,16 @@ except Exception: pass' "$1" "$2"
 infer_pids() { if [ -n "${FV_GUARD_INFER_CMD:-}" ]; then bash -c "$FV_GUARD_INFER_CMD"; else
   { pgrep -x llama-server; pgrep -f '/llama.cpp-cuda/build/bin/llama-server'; pgrep -f 'ollama runner'; } | sort -u; fi 2>/dev/null; }
 ticks() { awk '{print $14 + $15}' "$PROC/$1/stat" 2>/dev/null; }
-chain_reading() { # sets age, num, sync, chain_ok_parse
+chain_reading() { # sets age, num, sync, chain_ok_parse, unreachable (no answer at all)
   local js; js=$(tron); sync=$(ntp); ts=$(head_field "$js" timestamp); num=$(head_field "$js" number)
+  unreachable=0; [ -n "$(tr -d '[:space:]' <<< "$js")" ] || unreachable=1
   if [[ "$ts" =~ ^[0-9]+$ ]] && [[ "$num" =~ ^[0-9]+$ ]]; then age=$(( $(date +%s) - ts / 1000 )); chain_ok_parse=1
   else age=""; num=""; chain_ok_parse=0; fi
 }
 if [ "${1:-}" = --start-ok ]; then
   chain_reading
-  [ "$chain_ok_parse" = 1 ] || { echo "start: chain head unavailable or unparsable"; exit 1; }
+  [ "$unreachable" = 0 ] || { echo "start: chain node unreachable (no answer)"; exit 3; }
+  [ "$chain_ok_parse" = 1 ] || { echo "start: chain head unparsable"; exit 1; }
   [ "$sync" = yes ] || { echo "start: NTP not synchronised ($sync): the head age cannot be trusted; not starting"; exit 1; }
   echo "start: head age ${age}s"; [ "$age" -le "$AGE_GOOD" ]; exit $?
 fi
@@ -72,12 +96,20 @@ ours() { # PIDs in OUT/pids whose exe is the bundle's fuzzer and whose start tim
   done < "$O/pids"; }
 paused=0; chain_bad_n=0; busy_n=0; host_bad_n=0; prev_num=""; next_chain=0
 chain_good_since=""; calm_since=""; seen_infer=""
-age=""; num=""; sync=""; chain_ok_parse=0; chain_bad=0; chain_good=0; why_c=""
+age=""; num=""; sync=""; chain_ok_parse=0; chain_bad=0; chain_good=0; why_c=""; unreachable=0; unreach_since=""
 while [ ! -e "$O/guard.stop" ] && kill -0 "$RUNNER" 2> /dev/null; do
   now=$(date +%s)
   if [ "$now" -ge "$next_chain" ]; then  # chain check every IV seconds
     chain_reading; chain_bad=0; chain_good=0; why_c=""
-    if [ "$chain_ok_parse" != 1 ]; then chain_bad=1; why_c="endpoint failed or unparsable"
+    if [ "$unreachable" = 1 ]; then
+      unreach_since=${unreach_since:-$now}
+      if [ $((now - unreach_since)) -ge "$UNREACH_MAX" ]; then
+        why="chain node unreachable for $((now - unreach_since)) s (no answer since $(date -d "@$unreach_since" +%T))"
+        printf '%s\n' "$why" > "$O/guard.block"; p=$(ours | tr '\n' ' '); [ -n "$p" ] && kill -INT $p 2>/dev/null
+        touch "$O/paused"; log "{\"event\":\"BLOCK\",\"t\":$now,\"reason\":\"$why\"}"; exit 0
+      fi
+    else unreach_since=""; fi
+    if [ "$chain_ok_parse" != 1 ]; then chain_bad=1; why_c=$([ "$unreachable" = 1 ] && echo "chain node unreachable (no answer)" || echo "endpoint answer unparsable")
     else
       [ "$sync" = yes ] || { chain_bad=1; why_c+="NTP not synchronised, "; }
       [ "$age" -gt "$AGE_BAD" ] && { chain_bad=1; why_c+="head age ${age}s, "; }
@@ -91,6 +123,7 @@ while [ ! -e "$O/guard.stop" ] && kill -0 "$RUNNER" 2> /dev/null; do
       prev_num=$num; prev_t=$now
     fi
     if [ $chain_bad -eq 1 ]; then chain_bad_n=$((chain_bad_n + 1)); else chain_bad_n=0; fi
+    [ "$unreachable" = 1 ] && [ $chain_bad_n -lt 2 ] && chain_bad_n=2   # no answer: pause at once
     next_chain=$(( now + IV ))
   fi
   # inference CPU over one window; a PID gone during the window = busy
@@ -121,9 +154,18 @@ while [ ! -e "$O/guard.stop" ] && kill -0 "$RUNNER" 2> /dev/null; do
   fi
   if [ $paused -eq 0 ] && [ -n "$reasons" ]; then
     touch "$O/paused"; p=$(ours | tr '\n' ' '); [ -n "$p" ] && kill -INT $p
-    paused=1; log "{\"event\":\"PAUSE\",\"reason\":\"${reasons% }\",\"ended_batch_pids\":\"${p% }\",\"reading\":$reading}"
+    resume_need=$CHAIN_RESUME; br='"branch":"standard"'
+    if [ "$unreachable" = 1 ]; then  # the node is silent: is it the lease's scheduled restart?
+      rts=$(restart_ts)
+      if [ -z "${FV_LEASE_RESTART_UNIT:-}" ]; then br='"branch":"non-window","why":"no restart unit in the lease"'
+      elif ! [[ "$rts" =~ ^[0-9]+$ ]]; then br="\"branch\":\"non-window\",\"why\":\"start time of $FV_LEASE_RESTART_UNIT unreadable\""
+      elif [ $((now - rts)) -ge 0 ] && [ $((now - rts)) -le "$RESTART_WINDOW" ]; then
+        resume_need=$FAST_RESUME; br="\"branch\":\"restart-window\",\"unit\":\"$FV_LEASE_RESTART_UNIT\",\"unit_started\":$rts,\"now\":$now,\"resume_after_s\":$FAST_RESUME"
+      else br="\"branch\":\"non-window\",\"unit\":\"$FV_LEASE_RESTART_UNIT\",\"unit_started\":$rts,\"now\":$now"; fi
+    fi
+    paused=1; log "{\"event\":\"PAUSE\",\"reason\":\"${reasons% }\",$br,\"resume_after_s\":$resume_need,\"ended_batch_pids\":\"${p% }\",\"reading\":$reading}"
   elif [ $paused -eq 1 ] && [ $chain_bad -eq 0 ] && [ $host_bad -eq 0 ] && [ "$cpu" -le "$BUSY" ] \
-       && [ -n "$chain_good_since" ] && [ $((now - chain_good_since)) -ge "$CHAIN_RESUME" ] \
+       && [ -n "$chain_good_since" ] && [ $((now - chain_good_since)) -ge "$resume_need" ] \
        && [ -n "$calm_since" ] && [ $((now - calm_since)) -ge "$INFER_RESUME" ]; then
     rm -f "$O/paused"; paused=0; chain_bad_n=0; busy_n=0; host_bad_n=0
     log "{\"event\":\"RESUME\",\"reading\":$reading}"
