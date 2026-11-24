@@ -30,7 +30,8 @@ def fnv1a(data: bytes) -> str:
     return f"{h:016x}"
 
 
-def read_log(path: pathlib.Path) -> dict:
+def read_log(path: pathlib.Path, headers: list | None = None, errors: list | None = None) -> dict:
+    """Per-input records by hash; the replay's class headers and errors go to `headers` / `errors`."""
     seen = {}
     if path.is_file():
         for line in path.read_text(errors="replace").splitlines():
@@ -38,22 +39,33 @@ def read_log(path: pathlib.Path) -> dict:
                 r = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            seen.setdefault(r["h"], r)  # one record per distinct input
+            if not isinstance(r, dict):
+                continue
+            if "classes_header" in r:
+                if headers is not None:
+                    headers.append(r["classes_header"])
+            elif "error" in r:
+                if errors is not None:
+                    errors.append(str(r["error"]))
+            elif "h" in r:
+                seen.setdefault(r["h"], r)  # one record per distinct input
     return seen
 
 
-def domain_sources(header: pathlib.Path | None) -> dict:
-    """FV_CLASS("name", expression) -> {name: expression source}."""
-    out = {}
-    if not header or not header.is_file():
-        return out
-    src = re.sub(r"//[^\n]*", "", header.read_text())
-    i = 0
+def squash(s: str) -> str:
+    return re.sub(r"\s+", "", s)
+
+
+def macro_sources(path: pathlib.Path, macro: str, closure: bool) -> dict:
+    """MACRO("name", expression) -> {name: expression source}: FV_CLASS in classes.hpp, or
+    fv_class!("name", |before, op, after| expression) in a Rust target (closure=True)."""
+    src = re.sub(r"//[^\n]*", "", path.read_text())
+    out, i = {}, 0
     while True:
-        i = src.find("FV_CLASS(", i)
+        i = src.find(macro, i)
         if i < 0:
             break
-        j = i + len("FV_CLASS(")
+        j = i + len(macro)
         m = re.match(r'\s*"((?:[^"\\]|\\.)*)"\s*,', src[j:])
         if not m:
             i = j
@@ -64,9 +76,52 @@ def domain_sources(header: pathlib.Path | None) -> dict:
         while e < len(src) and depth:
             depth += {"(": 1, ")": -1}.get(src[e], 0)
             e += 1
-        out[name] = re.sub(r"\s+", " ", src[k:e - 1]).strip()
+        body = src[k:e - 1]
+        if closure:
+            body = re.sub(r"^\s*\|[^|]*\|", "", body)
+        out[name] = re.sub(r"\s+", " ", body).strip()
         i = e
     return out
+
+
+def py_sources(path: pathlib.Path) -> dict:
+    """fv_class("name", lambda before, op, after: expression) in classes.py -> {name: expression source}."""
+    import ast
+    text = path.read_text()
+    out = {}
+    for node in ast.walk(ast.parse(text)):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", getattr(node.func, "attr", None)) == "fv_class":
+            if (len(node.args) == 2 and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)
+                    and isinstance(node.args[1], ast.Lambda)):
+                out[node.args[0].value] = " ".join(ast.get_source_segment(text, node.args[1].body).split())
+            else:
+                raise ValueError(f"{path.name} line {node.lineno}: fv_class needs a string name and a lambda")
+    return out
+
+
+def check_sources(headers: list, sources: dict, file_sha: str | None, ran_sha: str | None) -> str | None:
+    """The class predicates the replay ran must be the ones in the file the report shows."""
+    if not headers:
+        return None
+    first = headers[0]
+    for h in headers[1:]:
+        if h.get("classes") != first.get("classes") or h.get("file_sha256") != first.get("file_sha256"):
+            return "class sources differ from what ran: the replay processes reported different class sets"
+    ran = {c["name"]: c["source"] for c in first.get("classes", [])}
+    if sorted(ran) != sorted(sources):
+        return f"class sources differ from what ran: names in the file {sorted(sources)}, in the replay {sorted(ran)}"
+    for n in ran:
+        if squash(ran[n]) != squash(sources[n]):
+            return f"class sources differ from what ran: '{n}' is `{sources[n]}` in the file, `{ran[n]}` in the replay"
+    ran_sha = first.get("file_sha256") or ran_sha
+    if ran_sha and file_sha != ran_sha:
+        return f"class sources differ from what ran: the classes file's sha256 is {file_sha} now, {ran_sha} when it ran"
+    return None
+
+
+def domain_sources(header: pathlib.Path | None) -> dict:
+    """FV_CLASS("name", expression) -> {name: expression source}."""
+    return macro_sources(header, "FV_CLASS(", False) if header and header.is_file() else {}
 
 
 def kind(c: str) -> str:
@@ -115,7 +170,10 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--corpus", nargs="*", default=[])
     ap.add_argument("--classes-header")
+    ap.add_argument("--classes-file", help="the Rust fuzz target (fv_class!) or classes.py (fv_class)")
+    ap.add_argument("--classes-file-sha256", help="the classes file's sha256 when its build ran (Rust)")
     ap.add_argument("--findings", nargs="*", default=[])
+    ap.add_argument("--retention", default="null", help="the retention pass's record (fuzz/run_fuzz.sh step 4b), JSON")
     ap.add_argument("--per-class", type=int, default=2)
     ap.add_argument("--max-deck", type=int, default=40)
     a = ap.parse_args()
@@ -123,9 +181,24 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
 
-    recs = read_log(pathlib.Path(a.log))
+    headers, errors = [], []
+    recs = read_log(pathlib.Path(a.log), headers, errors)
     header = pathlib.Path(a.classes_header) if a.classes_header else None
-    sources = domain_sources(header)
+    cfile = pathlib.Path(a.classes_file) if a.classes_file else (header if header and header.is_file() else None)
+    src_error = None
+    if a.classes_file:
+        try:
+            sources = (py_sources(cfile) if cfile.suffix == ".py" else macro_sources(cfile, "fv_class!(", True)) \
+                if cfile.is_file() else {}
+        except (ValueError, SyntaxError) as e:
+            sources, src_error = {}, f"classes file: {e}"
+    else:
+        sources = domain_sources(header)
+    cfile_sha = hashlib.sha256(cfile.read_bytes()).hexdigest() if cfile and cfile.is_file() else None
+    src_error = src_error or check_sources(headers, sources, cfile_sha, a.classes_file_sha256)
+    if a.classes_file and not headers and sources:
+        src_error = "class sources differ from what ran: the replay reported no class header"
+    canon = json.dumps([{"name": n, "source": sources[n]} for n in sorted(sources)], separators=(",", ":"))
     n_in = len(recs)
     n_steps = sum(r["steps"] for r in recs.values())
     reg_steps = sum(r["regular"] for r in recs.values())
@@ -189,17 +262,30 @@ def main():
           "output at every step.", "",
           f"- inputs classified: {n_in} (distinct), steps: {n_steps}",
           f"- regular (no edge class): {reg_inputs} inputs, {reg_steps} steps",
-          f"- domain classes: `classes.hpp` sha256 {hdr_sha or '(none)'}", ""]
-    md += ["## NOT EXERCISED (in the retained corpus)", "",
-           "The corpus keeps only inputs that added code coverage, so an edge case can be generated during",
-           "the campaign and still be missing here. Treat each entry as 'not shown to be covered': add a",
-           "seed for it, or widen the generator, and re-run.", ""]
+          f"- domain classes: `{cfile.name if cfile else 'classes.hpp'}` sha256 {cfile_sha or '(none)'}",
+          f"- class sources checked against what ran: {src_error or 'yes' if a.classes_file else 'n/a (C++: classes.hpp)'}", ""]
+    try:
+        ret = json.loads(a.retention) if a.retention else None
+    except json.JSONDecodeError:
+        ret = None
+    if ret and ret.get("complete") and ret.get("runs"):
+        md += ["## NOT EXERCISED (corpus and class-guided retention)", "",
+               f"No input in the corpus hits these, and none of {ret['runs']} executions of the generator by the",
+               f"retention pass did (oracle only, seed {ret['seed']}, value profiling; {len(ret.get('retained') or [])}",
+               "inputs kept, one per class first hit, each then compared by the verdict binary). Read each entry",
+               "as 'not generated in that budget': add a seed for it, or widen the generator, and re-run.", ""]
+    else:
+        md += ["## NOT EXERCISED (in the retained corpus)", "",
+               "The corpus keeps only inputs that added code coverage, so an edge case can be generated during",
+               "the campaign and still be missing here. Treat each entry as 'not shown to be covered': add a",
+               "seed for it, or widen the generator, and re-run."
+               + (f" (Retention: {ret.get('error') or ret.get('skipped')}.)" if ret else ""), ""]
     md += ([f"- **{c}**" for c in not_exercised] or ["- none"]) + [""]
     md += ["## Coverage", "", "| Class | Inputs | % inputs | Steps | % steps |", "|---|---|---|---|---|"]
     md += [f"| {t['class']}{' (NOT EXERCISED)' if t['class'] in not_exercised else ''} | {t['inputs']} | "
            f"{t['pct_inputs']} | {t['steps']} | {t['pct_steps']} |" for t in table]
     if sources:
-        md += ["", "## Domain class predicates (classes.hpp)", ""]
+        md += ["", f"## Domain class predicates ({cfile.name if cfile else 'classes.hpp'})", ""]
         md += [f"- **{n}**: `{s}`" for n, s in sources.items()]
     if timed:
         md += ["", "## Slowest inputs (C++ time per step, from the replay; informational)", "",
@@ -235,7 +321,12 @@ def main():
                "labels_only": True, "inputs": n_in, "steps": n_steps, "regular_inputs": reg_inputs,
                "regular_steps": reg_steps, "classes": table, "not_exercised": not_exercised,
                "classes_header_sha256": hdr_sha, "review_deck": str(out / "review_deck.md"),
+               "classes_file": str(cfile) if cfile else None, "classes_file_sha256": cfile_sha,
+               "classes_source_sha256": hashlib.sha256(canon.encode()).hexdigest() if sources else None,
                "finding_classes": finding_classes}
+    errs = ([src_error] if src_error else []) + sorted(set(errors))
+    if errs:
+        summary["error"] = "; ".join(errs)[:2000]
     (out / "classes.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary))
 

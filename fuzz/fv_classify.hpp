@@ -174,6 +174,31 @@ struct InputRecord {
       (void)!::write(fd, line.data(), line.size());
       ::close(fd);
     }
+    retain(data, size);
+  }
+
+  // Class-guided retention (FV_CLASSIFY_RETAIN=<dir>, the classify build run as a fuzzer with a fixed
+  // -seed by fuzz/run_fuzz.sh): the first input that hits each class is written to <dir>/<fnv1a>.
+  void retain(const uint8_t* data, size_t size) const {
+    static const char* dir = std::getenv("FV_CLASSIFY_RETAIN");
+    if (!dir || !*dir) return;
+    static std::set<std::string> kept;
+    static bool marked = false;
+    if (!marked) {
+      std::fprintf(stderr, "diff-oracle: CLASSIFY RETAIN %s\n", dir);
+      marked = true;
+    }
+    bool fresh = false;
+    for (const auto& hc : hits) fresh |= kept.insert(hc.first).second;
+    if (!fresh) return;
+    char name[32];
+    std::snprintf(name, sizeof name, "/%016llx", static_cast<unsigned long long>(fnv1a(data, size)));
+    const std::string path = std::string(dir) + name;
+    const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
+    if (fd >= 0) {
+      (void)!::write(fd, data, size);
+      ::close(fd);
+    }
   }
 };
 

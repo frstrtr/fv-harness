@@ -64,6 +64,26 @@ impl Binding for Risk {
         let m = u64::MAX;
         let _ = Self::oracle_step(&State { limit: m, pos: m / 2, open: m / 4, last: 0 }, &(0, m / 8));
     }
+    // Edge-case classes (labels only; the classify build alone runs these, on the oracle's states).
+    fn describe(k: &mut fv_diff::Sink, before: &State, op: &(u64, u64), after: &State) {
+        k.field("limit", before.limit as u128, 64, false);
+        k.field("q", op.1 as u128, 64, false);
+        k.arith_u("pos+open+q", before.pos + before.open, '+', op.1, 64); // the limit check's sum (pos+open <= limit)
+        if op.0 % 4 == 0 {
+            k.outcome(if after.last == 1 { "submit -> accepted" } else { "submit -> rejected" });
+        }
+    }
+    fn domain_classes() -> Vec<fv_diff::Class<State, (u64, u64)>> {
+        vec![
+            fv_class!("order exactly fills the limit", |before, op, after| op.0 % 4 == 0
+                && before.pos as u128 + before.open as u128 + op.1 as u128 == before.limit as u128),
+            fv_class!("q at or above 2^32", |before, op, after| op.1 >= 1 << 32),
+            fv_class!("reduce more than the position", |before, op, after| op.0 % 4 == 3 && op.1 > before.pos),
+        ]
+    }
+    fn class_universe() -> Vec<String> {
+        vec!["outcome: submit -> accepted".into(), "outcome: submit -> rejected".into()]
+    }
 }
 
 fv_diff_main!(Risk);

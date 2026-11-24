@@ -270,18 +270,24 @@ What `run_fuzz.sh` does:
   `binding.hpp` and `CMakeLists.txt` remain agent-side: review them like any other test code.
 - Applies per-project limits from `fv.toml` (`timeout`, `rss_limit_mb`, `malloc_limit_mb`, `report_slow_units`). Leaks, hangs and unbounded growth FAIL with their own detail (`LEAK`, `HANG`, `OOM`); see `docs/DESIGN-NOTES.md` §6.
 - Replays the persisted corpus first (regression).
-- After the verdict is settled, classifies the corpus for the reviewer (labels only, never part of
-  the verdict). This is a separate replay through the oracle alone; the C++ is not called. It
+- After the campaign, classifies the corpus for the reviewer (labels only, never part of the
+  verdict). This is a separate replay through the oracle alone; the C++ is not called. It
   reports which edge cases were exercised:
   - boundary values of the fields the binding declares;
   - empty, single and tied collections;
   - exact vs remainder-boundary divisions;
   - outcome labels;
-  - the project's own domain classes from `classes.hpp`.
+  - the project's own domain classes from `classes.hpp` (C++), `fv_class!` (Rust, EVM) or
+    `classes.py` (Python, TRON-TVM). For Rust, EVM, Python and TRON-TVM each predicate is checked
+    against the source that ran; for C++ the header is recorded by sha256 but not yet checked
+    against the build (planned).
 
-  Classes with 0 hits are listed as **NOT EXERCISED**. A review deck of the smallest example per
-  class goes to `classify/review_deck.md`. Control `c9_edge_not_exercised` proves a gap is
-  reported. See `docs/DESIGN-NOTES.md` §5.
+  Before that, a class-guided retention pass generates inputs from the oracle alone, with a fixed
+  seed and an execution budget. It keeps one input per class, and the verdict binary replays each
+  of them; a finding there is a FAIL. Classes with 0 hits are listed as **NOT EXERCISED**: not
+  generated in that budget. A review deck of the smallest example per class goes to
+  `classify/review_deck.md`. Controls `c9_edge_not_exercised` and `c68`–`c71` prove a gap is
+  reported, per language. See `docs/DESIGN-NOTES.md` §5.
 - Runs `-runs=N` (default 10^6) or `-max_total_time=S` (CI: 60).
 - On PASS, merges new coverage into `fuzz/corpus/`.
 - On FAIL, adds the reproducer to the corpus, so replay keeps failing until the C++ is fixed.

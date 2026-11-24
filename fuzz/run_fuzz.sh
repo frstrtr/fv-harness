@@ -189,6 +189,12 @@ MAX_LEN=$(cfg max_len ""); LEN_CTL=$(cfg len_control "")
 [ -z "$BAD_LIMIT" ] || { T_OUT=0; RSS_MB=0; MAL_MB=0; SLOW_S=0; MAX_LEN=""; LEN_CTL=""; }
 LENS=(); [ -n "$MAX_LEN" ] && LENS+=(-max_len="$MAX_LEN"); [ -n "$LEN_CTL" ] && LENS+=(-len_control="$LEN_CTL")
 LIMITS=(-timeout="$T_OUT" -rss_limit_mb="$RSS_MB" -malloc_limit_mb="$MAL_MB" -report_slow_units="$SLOW_S")
+# Class-guided retention (step 4b): an execution budget and a fixed seed (libFuzzer's -seed=0 would be random).
+RETAIN_RUNS=$(cfg retain_runs 200000); RETAIN_SEED=$(cfg retain_seed 1); BAD_RETAIN=""
+[[ "$RETAIN_RUNS" =~ ^(0|[1-9][0-9]{0,9})$ ]] && [ "$RETAIN_RUNS" -lt 2147483648 ] || BAD_RETAIN+="retain_runs=$RETAIN_RUNS "
+[[ "$RETAIN_SEED" =~ ^[1-9][0-9]{0,9}$ ]] && [ "$RETAIN_SEED" -lt 4294967296 ] || BAD_RETAIN+="retain_seed=$RETAIN_SEED "
+[ -z "$BAD_RETAIN" ] || { RETAIN_RUNS=0; RETAIN_SEED=1; }
+RETAIN_JSON=null
 RUN="${out:-$FV_ROOT/runs/fuzz-$target-$(date +%Y%m%dT%H%M%S)-$$}"
 mkdir -p "$RUN"; RUN="$(cd "$RUN" && pwd)"
 # One gate per run directory, for the gate's whole lifetime: a second run on the same --out would delete
@@ -259,6 +265,7 @@ verdict() { # verdict EXIT VERDICT DETAIL
 }
 
 [ -z "$BAD_LIMIT" ] || verdict 3 ERROR "fv.toml: limits must be positive whole numbers (0 disables a limit; len_control may be 0): ${BAD_LIMIT% }"
+[ -z "$BAD_RETAIN" ] || verdict 3 ERROR "fv.toml: retain_runs must be a whole number below 2^31 (0 skips retention) and retain_seed one from 1 to 2^32-1 (0 would be random): ${BAD_RETAIN% }"
 
 # 1. Lock and trusted oracle copy.
 if [ "$draft" -eq 1 ]; then
@@ -318,7 +325,7 @@ if [ -n "${FV_BUILD_SYSROOT:-}" ]; then
   cfg+=(-DCMAKE_SYSROOT="$FV_BUILD_SYSROOT" -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
         -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc")
 fi
-BIN_CLS=""
+BIN_CLS=""; CLS_FILE=()
 case "$lang" in
   cpp)
     [ -n "$impl" ] && cfg+=(-DIMPL_DIR="$(cd "$impl" && pwd)")
@@ -384,6 +391,8 @@ case "$lang" in
          FV_DIFF_RS="$HERE/rust/fv_diff.rs" "${xenv[@]}" RUSTFLAGS="-C overflow-checks=on -C debug-assertions=on$2" \
          cargo fuzz build -a --fuzz-dir "$cmake_dir" --target-dir "$1" "$target")
     }
+    TSRC_SHA=$(sha256sum < "$tsrc" | cut -d' ' -f1)  # the fv_class! sources as built (classify_report.py checks them)
+    CLS_FILE=("--classes-file" "$tsrc" "--classes-file-sha256" "$TSRC_SHA")
     lock0=$(sha256sum < "$cmake_dir/Cargo.lock" 2>/dev/null)
     if ! { capped cmake "${cfg[@]}" && capped cmake --build "$RUN/build" --target "${target}_oracle" -j "$FV_JOBS" \
            && cargo_build "$RUN/cargo-target" ""; } >> "$LOG" 2>&1; then
@@ -420,6 +429,16 @@ case "$lang" in
     printf '#!/bin/sh\nexec env FV_SELF=%q FV_BINDING=%q FV_IMPL_DIR=%q FV_ORACLE_SO=%q %q -I %q "$@"\n' \
       "$BIN" "$bnd" "$impl_dir" "$so" "$py" "$HERE/python/fv_diff.py" > "$BIN"
     chmod +x "$BIN"
+    # The labels-only replay (fuzz/python/fv_classify.py): its own wrapper, never the implementation.
+    if [ "${FV_NO_CLASSIFY:-0}" != 1 ]; then
+      BIN_CLS="$RUN/classify-$target"
+      # Fixed string hashing (PYTHONHASHSEED=0), so the retention pass is reproducible; every other PYTHON*
+      # variable of the caller is removed (-s -P instead of -I, which would also ignore PYTHONHASHSEED).
+      printf '#!/bin/sh\nfor v in $(env | sed -n "s/^\\(PYTHON[A-Za-z0-9_]*\\)=.*/\\1/p"); do unset "$v"; done\nPYTHONHASHSEED=0 exec env FV_BINDING=%q FV_ORACLE_SO=%q FV_CLASSES_PY=%q %q -s -P %q "$@"\n' \
+        "$bnd" "$so" "$cmake_dir/classes.py" "$py" "$HERE/python/fv_classify.py" > "$BIN_CLS"
+      chmod +x "$BIN_CLS"
+      CLS_FILE=(--classes-file "$cmake_dir/classes.py")
+    fi
     impl="$impl_dir"
     ;;
   tron-tvm)
@@ -525,6 +544,16 @@ except OSError: print("")' "$cmake_dir/fv.toml")
       "$RUN/tron-tvm/db.XXXXXX" "$BIN.inner" "$bnd" "$impl_dir" "$so" "$HERE/tron-tvm" "$RUN/tron-tvm/driver.sh" "$RUN/tron-tvm/creation.hex" "$RUN/tron-tvm/runtime.hex" "$RUN/tron-tvm/coverage.pcs" "$RUN/tron-tvm/status.jsonl" \
       "$py" "$HERE/python/fv_diff.py" > "$BIN"
     chmod +x "$BIN"
+    # The labels-only replay: the same deploy (warm_up) offline, then the oracle only; its own executor
+    # store, status and coverage files, so nothing it does counts as the run's TRON-TVM observation.
+    if [ "${FV_NO_CLASSIFY:-0}" != 1 ]; then
+      BIN_CLS="$RUN/classify-$target"; mkdir -p "$RUN/classify"
+      printf '#!/bin/sh\nfor v in $(env | sed -n "s/^\\(PYTHON[A-Za-z0-9_]*\\)=.*/\\1/p"); do unset "$v"; done\ndb=$(mktemp -d %q)\nPYTHONHASHSEED=0 exec bwrap --dev-bind / / --unshare-net -- env FV_BINDING=%q FV_ORACLE_SO=%q FV_CLASSES_PY=%q FV_HARNESS_PY=%q FV_TRON_TVM_CMD=%q FV_TRON_TVM_CREATION=%q FV_TRON_TVM_RUNTIME=%q FV_TRON_TVM_DB="$db" FV_TRON_TVM_COVERAGE=%q FV_TRON_TVM_STATUS=%q %q -s -P %q "$@"\n' \
+        "$RUN/tron-tvm/db.XXXXXX" "$bnd" "$so" "$cmake_dir/classes.py" "$HERE/tron-tvm" "$RUN/tron-tvm/driver.sh" "$RUN/tron-tvm/creation.hex" "$RUN/tron-tvm/runtime.hex" \
+        "$RUN/classify/tron-tvm-coverage.pcs" "$RUN/classify/tron-tvm-status.jsonl" "$py" "$HERE/python/fv_classify.py" > "$BIN_CLS"
+      chmod +x "$BIN_CLS"
+      CLS_FILE=(--classes-file "$cmake_dir/classes.py")
+    fi
     impl="$impl_dir"
     ;;
   *) verdict 3 ERROR "unknown --lang $lang (cpp|rust|python|evm|tron-tvm)" ;;
@@ -540,21 +569,32 @@ export FV_FUZZ_ARTIFACT_DIR="$RUN/artifacts"
 classify() { # classify corpus|findings — labels only; sets CLASSES_JSON, never the verdict
   [ "${FV_NO_CLASSIFY:-0}" = 1 ] && return 0
   [ -n "$BIN_CLS" ] || { CLASSES_JSON='{"labels_only": true, "error": "no classify build (add_diff_fuzzer from an older LeanOracle.cmake?)"}'; return 0; }
-  local C="$RUN/classify" hdr=() src=() fnd=()
+  local C="$RUN/classify" hdr=() src=() fnd=() rrc=0
   mkdir -p "$C"; rm -f "$C/log.jsonl"
   [ -f "$cmake_dir/classes.hpp" ] && hdr=(--classes-header "$cmake_dir/classes.hpp")
   if [ "$1" = corpus ]; then
     src=("$corpus"); [ "$merge" -eq 1 ] || src+=("$RUN/new_corpus")
+    [ -d "$C/retained" ] && src+=("$C/retained")  # class-guided inputs, each compared by the verdict binary (4b)
     FV_CLASSIFY="$C/log.jsonl" FV_CLASSIFY_TIME_IMPL=1 capped "$BIN_CLS" "${LIMITS[@]}" -runs=0 "${src[@]}" > "$C/replay.log" 2>&1
+    rrc=$?  # a replay that stopped (a describe() or predicate that raised or panicked) classified only part of the corpus
   else
     for f in "$RUN"/artifacts/*; do [ -f "$f" ] && fnd+=("$f"); done
     [ ${#fnd[@]} -gt 0 ] || return 0
     fnd=(--findings "${fnd[@]}")
   fi
   if ! CLASSES_JSON=$(capped python3 -I "$HERE/classify_report.py" --log "$C/log.jsonl" --bin "$BIN_CLS" --out "$C" \
-       --corpus "${src[@]}" "${hdr[@]}" "${fnd[@]}" 2>> "$C/report.log") || [ -z "$CLASSES_JSON" ]; then
+       --corpus "${src[@]}" "${hdr[@]}" "${CLS_FILE[@]}" --retention "$RETAIN_JSON" "${fnd[@]}" 2>> "$C/report.log") || [ -z "$CLASSES_JSON" ]; then
     CLASSES_JSON='{"labels_only": true, "error": "classification failed (see classify/report.log)"}'
   fi
+  if [ "$rrc" -ne 0 ]; then
+    local why; why=$(grep -m1 -E 'CLASSIFY ERROR|panicked at|Error:|Exception|ERROR: (AddressSanitizer|libFuzzer|UndefinedBehaviorSanitizer)|runtime error:' "$C/replay.log" | cut -c1-200)
+    CLASSES_JSON=$(jq -c --arg e "the classification replay exited $rrc, so only part of the corpus is classified: ${why:-see classify/replay.log}" \
+      '.error = ((if .error then .error + "; " else "" end) + $e)' <<< "$CLASSES_JSON" 2>/dev/null || echo "$CLASSES_JSON")
+  fi
+  # A retention generation that stopped on its own error (a describe() or predicate that raised) is a classifier error too.
+  CLASSES_JSON=$(jq -c --argjson r "$RETAIN_JSON" '. + {retention: $r}
+    | if ($r.error // "" | startswith("the generation exited")) then .error = ((if .error then .error + "; " else "" end) + "retention: " + $r.error) else . end' \
+    <<< "$CLASSES_JSON" 2>/dev/null || echo "$CLASSES_JSON")
 }
 
 fail_kind() { # fail_kind LOG -> a verdict detail naming what went wrong, or nothing
@@ -849,6 +889,61 @@ if [ "$lang" = tron-tvm ]; then  # a PASS needs the TRON-TVM to have run: observ
           cpu_time_limit: (if ($c | contains("debug=true")) then "disabled (--debug, observed in every driver); OUT_OF_TIME not covered" else "UNKNOWN" end),
           processes: {driver_starts: $n, with_transactions: $k}}' <<< "$EVM_JSON")
 fi
+
+# 4b. Class-guided retention. libFuzzer's corpus keeps only inputs that add coverage, so an edge class the
+# campaign generated can be missing from it. The classify build (oracle only, never the implementation)
+# runs as a fuzzer from the corpus with a FIXED seed and an execution budget ([fuzz] retain_runs, default
+# 200000; retain_seed, default 1), with value profiling (it steers toward the equalities the classes
+# test), and keeps the first input per class (FV_CLASSIFY_RETAIN). The same seed, budget, binary and
+# corpus give the same retained set. Then the VERDICT binary replays those inputs, under the rules of the
+# corpus replay: a finding is FAIL with the reproducer kept, an executor failure is ERROR. Retention only
+# adds compared inputs; it never removes one. On the gate only, after the campaign's verdict. A classify
+# build without retention support (an older vendored fv_classify.hpp), or a generation that did not
+# complete its budget, is recorded and changes nothing (the inputs it kept are still replayed).
+retention() {
+  [ "${FV_NO_CLASSIFY:-0}" = 1 ] && return 0
+  [ -n "$BIN_CLS" ] || return 0
+  local C="$RUN/classify" K="$RUN/classify/retained" W="$RUN/classify/retain-work" src=("$corpus") rc rr n done_ ok=true
+  [ "$RETAIN_RUNS" -gt 0 ] || { RETAIN_JSON='{"runs": 0, "skipped": "retain_runs = 0"}'; return 0; }
+  mkdir -p "$C"; rm -rf "$K" "$W"; mkdir -p "$K" "$W"
+  [ -d "$RUN/new_corpus" ] && src+=("$RUN/new_corpus")
+  # The first directory receives libFuzzer's own new units (W, discarded); -reload=0: no timed re-reads.
+  FV_CLASSIFY=/dev/null FV_CLASSIFY_RETAIN="$K" capped "$BIN_CLS" "${LIMITS[@]}" "${LENS[@]}" -seed="$RETAIN_SEED" \
+    -runs="$RETAIN_RUNS" -use_value_profile=1 -reload=0 -max_total_time="${FV_RETAIN_GUARD_S:-3600}" \
+    -artifact_prefix="$C/retain-artifact-" "$W" "${src[@]}" > "$C/retain.log" 2>&1
+  rc=$?
+  done_=$(grep -oE '^Done [0-9]+ runs' "$C/retain.log" | tail -1 | grep -oE '[0-9]+')  # libFuzzer, once -runs is reached
+  [ -n "$done_" ] || done_=$(grep -oE '^#[0-9]+' "$C/retain.log" | tail -1 | tr -d '#')
+  n=$(find "$K" -maxdepth 1 -type f | wc -l)
+  local err=null
+  if ! grep -q '^diff-oracle: CLASSIFY RETAIN' "$C/retain.log"; then
+    err='"this classify build has no retention (an older vendored fv_classify.hpp?)"'; ok=false
+  elif [ $rc -ne 0 ]; then
+    err=$(jq -Rn --arg t "the generation exited $rc: $(grep -m1 -E 'ERROR|CLASSIFY ERROR|panicked|Uncaught' "$C/retain.log" | cut -c1-160)" '$t'); ok=false
+  elif [ "${done_:-0}" -lt "$RETAIN_RUNS" ]; then
+    err=$(jq -Rn --arg t "the generation stopped after ${done_:-0} of $RETAIN_RUNS executions (time guard): not reproducible" '$t'); ok=false
+  fi
+  RETAIN_JSON=$(jq -nc --argjson runs "$RETAIN_RUNS" --argjson seed "$RETAIN_SEED" --argjson done "${done_:-0}" --argjson err "$err" \
+    --argjson complete "$ok" --arg hashes "$(find "$K" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')" \
+    '{runs: $runs, seed: $seed, executions: $done, complete: $complete, error: $err, value_profile: true,
+      retained: ($hashes | split(" ") | map(select(. != ""))), replayed: null}')
+  [ "$n" -gt 0 ] || return 0
+  # The verdict binary compares every retained input.
+  capped "$BIN" "${LIMITS[@]}" -runs=0 -artifact_prefix="$RUN/artifacts/retain-" "$K" > "$RUN/retain-replay.log" 2>&1
+  rr=$?
+  classify_line_in "$RUN/retain-replay.log" && verdict 3 ERROR "the retention replay ran a classify build, which never compares"
+  RETAIN_JSON=$(jq -c --argjson n "$n" '.replayed = $n' <<< "$RETAIN_JSON")
+  if [ $rr -ne 0 ]; then
+    executor_verdict "$RUN/retain-replay.log"
+    cat "$RUN/retain-replay.log" >> "$RUN/campaign.log"
+    keep_reproducers
+    classify findings
+    rkind=$(fail_kind "$RUN/retain-replay.log")
+    [ -n "$rkind" ] || verdict 3 ERROR "retention replay exited $rr without a finding (see $RUN/retain-replay.log)"
+    verdict 1 FAIL "retention replay (class-guided inputs, seed $RETAIN_SEED, $RETAIN_RUNS executions) failed: $rkind"
+  fi
+}
+retention
 
 # 5. Corpus persistence.
 # The merge re-runs every input in a fresh inner process. A failure there is a finding: libFuzzer would

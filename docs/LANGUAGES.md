@@ -121,12 +121,17 @@ arithmetic **wraps silently** unless the code uses `checked_*`, `wrapping_*` or 
 The fuzz build turns an overflow into a FAIL, even where production would wrap. That is usually
 what you want. If wrapping is intended, write `wrapping_*` explicitly so that both builds agree.
 
-**Classification.** A Rust binding can implement `classes()` and `class_universe()`, which return
-labels computed from the step and the oracle's result. `run_fuzz.sh` then builds a second,
-labels-only binary with `--cfg fv_classify`. It replays the corpus through the oracle and never
-compares; the classifier report and review deck follow, as for C++. The generic boundary classes
-of the C++ `describe()` (field = 0, max, 2^k ...) have no Rust counterpart yet. Without
-`classes()`, a Rust run is classified with no labels. The verdict is unaffected either way.
+**Classification.** A Rust binding can implement `describe(k, before, op, after)` and
+`domain_classes()`. `describe` declares, on `k: fv_diff::Sink`, the values whose boundaries matter;
+the class names are the C++ ones. The Sink offers `field`, `size`, `division`, `outcome`,
+`arith_u`/`arith_i` (the exact sum, difference or product against the type's range: what overflow
+checks panic on), and for EVM words `word`, `address` and `calldata`. `domain_classes()` returns
+`fv_class!("name", |before, op, after| expression)` entries. The macro keeps the expression's source
+for the reviewer, and in the verdict build it compiles to nothing. `classes()` and
+`class_universe()` still add free-form outcome labels. `run_fuzz.sh` builds a second, labels-only
+binary with `--cfg fv_classify`. It replays the corpus through the oracle and never compares. It
+also writes the predicate sources that ran. The report checks them against the target file: a
+difference is a classification error, never silently accepted. The verdict is unaffected either way.
 
 ## Python: setup, pins and measured results
 
@@ -189,6 +194,20 @@ Measured on the risk-limit example:
 
 Controls c21–c24 cover these and the driver. A copy with the domain check replaced by a
 reduction mod 2^64 lets c23 PASS, which is exactly the masking the check exists to prevent.
+
+**Classification.** Put `classes.py` next to `binding.py`. It holds `describe(k, before, op, after)`,
+using the Sink of `fuzz/python/fv_sink.py`. That Sink has the C++ classes plus `arith` (the exact
+result against [0, 2^64) or another width), `float_exact` (above 2^53, where `int(a / b)` and
+`float(x)` round) and signed `division` (where floor and truncation differ). `classes.py` also
+holds `CLASSES = [fv_class("name", lambda before, op, after: expression), ...]`, and `UNIVERSE`
+for the outcome labels a reviewer should see. The labels-only replay `fuzz/python/fv_classify.py`
+runs from its own wrapper. It never imports the implementation module, and the verdict driver
+never loads `classes.py`. The replay hashes the bytes of `classes.py` it runs and records each
+lambda's source. The report re-reads the file and must find the same sha256, names and sources.
+Each `fv_class` must therefore be a literal call with a string name and a lambda. For
+`--lang tron-tvm` the replay deploys the contract as the verdict run does, then uses the oracle
+only. Any transaction it sends is a classification error. Its executor status and coverage files
+are its own, so it never counts as the run's TRON-TVM observation.
 
 ## Threat model of the coupling: the binding is trusted
 
@@ -323,8 +342,8 @@ deployed code's sha256. Different compiler output is then BLOCKED before any fuz
 **Outcome classes.** The labels-only classify binary (a separate `--cfg fv_classify` build of the
 same target) replays the corpus through the oracle. It records the outcome the model implies for
 each step, for example `outcome: submit(uint64) -> revert LimitExceeded()`. Any declared outcome
-with no hit in the retained corpus is listed as NOT EXERCISED. The same mechanism serves Rust
-targets that implement `classes()`.
+with no hit is listed as NOT EXERCISED. `describe` and `fv_class!` work as for Rust, with
+`word(name, w, bits)` at the Solidity type's width.
 
 **What this covers, and what it does not.**
 - One contract and the callers the binding chooses. A model with external calls needs stubs with

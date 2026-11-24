@@ -565,8 +565,17 @@ def cmd_close(a):
     else:
         md += [f"- {ec.get('inputs')} distinct corpus inputs, {ec.get('steps')} steps; regular: "
                f"{ec.get('regular_inputs')} inputs, {ec.get('regular_steps')} steps",
-               f"- classes.hpp sha256: `{ec.get('classes_header_sha256')}`; review deck: `{ec.get('review_deck')}`",
-               "- **NOT EXERCISED (in the retained corpus):** " + (", ".join(ec.get("not_exercised") or []) or "none")]
+               (f"- classes file `{ec.get('classes_file')}` sha256 `{ec.get('classes_file_sha256')}`; predicate sources "
+                f"sha256 `{ec.get('classes_source_sha256')}`; review deck: `{ec.get('review_deck')}`" if ec.get("classes_file")
+                else f"- classes.hpp sha256: `{ec.get('classes_header_sha256')}`; review deck: `{ec.get('review_deck')}`"),
+               "- **NOT EXERCISED (in the retained corpus" + (", and the class-guided retention pass" if (ec.get("retention") or {}).get("complete") else "")
+               + "):** " + (", ".join(ec.get("not_exercised") or []) or "none")]
+        rt = ec.get("retention")
+        if rt:
+            md += [f"- class-guided retention: {rt.get('runs')} executions budgeted, {rt.get('executions')} done, seed {rt.get('seed')}, "
+                   f"complete={rt.get('complete')}; {len(rt.get('retained') or [])} inputs kept, {rt.get('replayed')} replayed by the verdict binary"
+                   + (f"; {rt['error']}" if rt.get("error") else "") + (f"; {rt['skipped']}" if rt.get("skipped") else ""),
+                   "- retained inputs (fnv1a): " + (" ".join(rt.get("retained") or []) or "none")]
         md += [f"- {t['class']}: {t['inputs']} inputs ({t['pct_inputs']} %), {t['steps']} steps"
                + (f" — `{t['source']}`" if t.get("source") else "") for t in ec.get("classes", [])]
         if ec.get("finding_classes"):

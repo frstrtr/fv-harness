@@ -195,6 +195,13 @@ FV_LANG_CONTROLS="rust python evm tron-tvm" "$ROOT/tests/harness_fv_controls/run
 # shellcheck disable=SC2086
 collect lang "$OUT/lang.out" $rcl $LANG_IDS
 
+# The edge-case classifier beyond C++ and the class-guided retention pass (labels; retention replays are verdicts).
+CLS_IDS="c68_gap_rust c69_gap_py c70_gap_evm c71_gap_tron_tvm c72_class_source_mismatch c75_py_classify_isolation
+  c73_retention_keeps c74_retention_replay_fails"
+"$ROOT/tests/harness_fv_controls/run_classify_controls.sh" "$OUT/classify" > "$OUT/classify.out" 2>&1; rcc=$?
+# shellcheck disable=SC2086
+collect classify "$OUT/classify.out" $rcc $CLS_IDS
+
 # Control 20: a language the gate host requires (FV_REQUIRE_LANGS) may not be skipped.
 D20="$OUT/c20_required_lang"; mkdir -p "$D20"
 FV_LANG_CONTROLS="rust python evm tron-tvm" FV_REQUIRE_LANGS="rust python evm tron-tvm" FV_RUST_HOME="$D20/no-toolchain" FV_PY="$D20/no-python" FV_SOLC="$D20/no-solc" FV_TRON_TVM_HOME="$D20/no-tvm" "$ROOT/tests/harness_fv_controls/run_lang_controls.sh" "$D20/req" > "$D20/req.out" 2>&1; r1=$?

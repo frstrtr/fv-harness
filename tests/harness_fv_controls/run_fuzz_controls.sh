@@ -64,7 +64,7 @@
 #                 never PASS.
 #   c62_slow_units_jobs  --jobs 2 with an implementation that is correct but slow on its first input in each
 #                 process: PASS, the workers' slow units (w<w>-slow-unit-*) recorded in fuzz.json slow_units,
-#                 never counted as failing artifacts.
+#                 never counted as failing artifacts (the retention replay's own, retain-slow-unit-*, likewise).
 #   c63_out_lock   a second run on an --out another run is using is refused at once (ERROR, "another run
 #                 holds"), and the first run's verdict and record are intact.
 #   c66_chain_unreachable  a chain node that does not answer PAUSEs the campaign and is retried; only past
@@ -414,7 +414,7 @@ fi
 
 campaign c62_slow_units_jobs --jobs 2 --runs 4000 --impl-dir "$ROOT/tests/harness_fv_controls/variants/c62_slow_first"
 rc=$?; j="$OUT/c62_slow_units_jobs/run/fuzz.json"
-if [ $rc -eq 0 ] && jq -e '.verdict == "PASS" and (.slow_units | length) >= 1 and all(.slow_units[]; test("^w[0-9]+-slow-unit-"))' "$j" > /dev/null; then
+if [ $rc -eq 0 ] && jq -e '.verdict == "PASS" and (.slow_units | length) >= 1 and any(.slow_units[]; test("^w[0-9]+-slow-unit-")) and all(.slow_units[]; test("^(w[0-9]+|retain)-slow-unit-"))' "$j" > /dev/null; then
   echo "c62_slow_units_jobs OK --jobs 2, a slow but correct first input per worker: PASS, slow units recorded: $(jq -r '.slow_units | join(" ") | .[0:120]' "$j")"
 else
   echo "c62_slow_units_jobs WRONG exit=$rc $(jq -c '{verdict, detail, slow_units}' "$j" 2>/dev/null | cut -c1-300)"; fails=1

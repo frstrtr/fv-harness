@@ -141,9 +141,15 @@ implementation.
 - a failure inside it is recorded as an error string;
 - the verdict code is unchanged.
 
-The class predicates in `classes.hpp` live outside the signed lock. They are recorded by sha256 in
-`fuzz.json` and the closure, and printed with their source in `closure.md` and the review deck,
-so the reviewer reads what each class checks.
+The class predicates (`classes.hpp`, a Rust target's `fv_class!` entries, a Python `classes.py`)
+live outside the signed lock. They are recorded by sha256 in `fuzz.json` and the closure, and
+printed with their source in `closure.md` and the review deck, so the reviewer reads what each
+class checks. For Rust, EVM, Python and TRON-TVM the replay also writes the sources that ran:
+`stringify!` of each predicate, or the lambdas of the `classes.py` bytes it hashed and ran.
+`classify_report.py` re-reads the file and reports "class sources differ from what ran" on any
+difference in names, sources or sha256 (control c72). `fuzz.json` adds `classes_file_sha256` and
+`classes_source_sha256`, the sha256 of the sorted name and source list. C++ keeps
+`classes_header_sha256`. Its binary does not yet write its sources (planned).
 
 **Classes.**
 - **Generic** (from the binding's `describe()`):
@@ -167,13 +173,33 @@ hid. The generator starts with `limit = 0` in about 70 % of inputs. It never pro
 or open quantity near 2^64. Its own first domain class also had a bug: `headroom + 1` wrapped in
 64-bit C++ and matched `q = 0`. Predicates now use `fvfuzz::u128` where sums can pass 2^64.
 
-**What "NOT EXERCISED" means today.** The replay classifies the persisted corpus. libFuzzer keeps
-only inputs that add code coverage. An edge case the campaign generated many times can still be
-absent, because no input carrying it added coverage. On the fixture, "fee rate exactly at the
-cap" is listed although 10,000 is one of the generator's favoured values. Read each entry as "not
-shown to be covered". Add a seed for it, or widen the generator. A class-guided retention pass is
-a proposed follow-up: a separate process that keeps one input per class, so absence would mean
-"never generated".
+**What "NOT EXERCISED" means.** libFuzzer keeps only inputs that add code coverage. An edge case
+the campaign generated many times can therefore be absent from the corpus, because no input carrying
+it added coverage. On the fixture, "fee rate exactly at the cap" was listed although 10,000 is one of
+the generator's favoured values. The **class-guided retention pass** (`run_fuzz.sh` step 4b) closes
+that gap:
+- After the campaign's verdict, on the gate, the classify build runs as a fuzzer from the corpus. It
+  calls the oracle only, never the implementation.
+- It runs with a **fixed seed** (`[fuzz] retain_seed`, default 1; 0, which would be random, is
+  refused), an **execution budget** (`retain_runs`, default 200000), value profiling and
+  `-reload=0`, and keeps the first input that hits each class. Python runs with fixed string
+  hashing. The same binary, corpus, seed and budget give the same retained set.
+- The **verdict binary** then replays the retained inputs, under the rules of the corpus replay:
+  a finding is FAIL with the reproducer kept, and an executor failure is ERROR. Retention only
+  adds compared inputs; it never removes one.
+- `fuzz.json` (`classes.retention`) and the closure record the budget, the seed, the executions
+  done, whether the budget completed, and every retained input's hash. Retained inputs are not
+  persisted: the next run regenerates them.
+
+NOT EXERCISED then reads "not generated in that budget". A generation stopped by its time guard
+(`FV_RETAIN_GUARD_S`, default 3600 s) is recorded as incomplete and not reproducible. Its inputs
+are still replayed, and a finding among them is still a FAIL. A classify build without retention
+support (an older vendored `fv_classify.hpp`) is recorded and changes nothing. Controls:
+- c73: a class hit only by a retained input is not NOT EXERCISED;
+- c74: a finding that only the retention pass reaches FAILs, with the same reproducer in three runs.
+
+A binding whose own code is not deterministic (for example Rust `HashMap` iteration that steers
+control flow) can make the retained set vary between runs. The recorded hashes show it.
 
 **Control.** `c9_edge_not_exercised` caps the fixture generator's fee rate at 10,000 basis
 points. The class "fee rate above the cap" must be NOT EXERCISED while the verdict stays PASS.
