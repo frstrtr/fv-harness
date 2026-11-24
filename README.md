@@ -40,6 +40,41 @@ The pipeline:
   harness's first runs: on its own fixture, on the tools it builds on, and on its first production
   specification (`docs/CASE-STUDIES.md`).
 
+## Changes in v0.3.1
+
+- **Edge-case classification in every language.**
+  - C++, Rust, EVM, Python and TRON-TVM bindings now share one set of class names. Rust and EVM
+    targets declare classes with `describe()` and `fv_class!`. Python and TRON-TVM bindings do so in
+    `classes.py`.
+  - The replay that classifies the corpus calls the oracle only. In Python it never imports the
+    implementation. For TRON-TVM, a transaction sent during that replay is an error.
+  - For Rust, EVM, Python and TRON-TVM, the predicate sources that ran are checked against the file
+    the reviewer reads, and a difference is reported as "class sources differ from what ran" (for
+    C++, `classes.hpp` is recorded by sha256 but not yet checked against the build). A replay that stops part-way is an error,
+    never a partial result shown as complete.
+- **Class-guided retention.** After the campaign, the oracle-only classify build generates inputs
+  with a fixed seed and an execution budget, keeping the first input for each class.
+  - The verdict binary then replays every retained input. A finding there is a FAIL with its
+    reproducer kept.
+  - NOT EXERCISED now means "not generated in that budget". The budget, the seed and every retained
+    input's hash are recorded in `fuzz.json` and the closure.
+- **Worker gate.**
+  - Worker bundles build against a hash-pinned glibc 2.39 sysroot (`fuzz/sysroot/`).
+  - The gate checks each bundle against the worker's declared glibc and libstdc++ targets before
+    connecting. An ssh worker with no declared target is ERROR.
+  - A chain node that stops answering pauses the campaign and is retried. Only after 10 minutes of
+    silence is the worker blocked.
+  - Where the lease names the node's restart unit, a pause during the node's scheduled restart
+    resumes after 2 minutes instead of 10.
+- **The control suite** adds c65–c75. The evidence of one full run is in
+  `tests/harness_fv_controls/evidence/`.
+- **Upgrading from v0.3.0.**
+  - Vendored copies may cite `v0.3.1`. The lines for earlier releases stay valid.
+  - Without `classes.py`, or without `describe()`, a project is still classified, with fewer classes.
+  - Set `[fuzz] retain_runs = 0` in `fv.toml` to skip the retention pass.
+  - ssh workers need `FV_WORKER_GLIBC_MAX_<NAME>` and `FV_WORKER_GLIBCXX_MAX_<NAME>` in
+    `config/hosts.env`.
+
 ## Changes in v0.3.0
 
 - **Contracts on the TRON Virtual Machine (TVM): `--lang tron-tvm`.** The contract under test runs on
