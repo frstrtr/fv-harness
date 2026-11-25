@@ -15,8 +15,12 @@ permissions:
 jobs:
   controls:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90    # a cold install plus the suite took about 18 minutes on a hosted runner
-                           # before v0.3.0; v0.3.0 adds the multi-worker and merge controls
+    timeout-minutes: 300   # v0.3.1: every C++ campaign that passes now runs the class-guided retention
+                           # pass (200000 executions, about 7-8 minutes each on a 4-core host) and the
+                           # C++ controls run about 20 such campaigns; the chain-node controls wait
+                           # about 11 and 13 minutes by design. In the evidence run the C++ controls
+                           # alone took about 2.5 hours on the gate host; before v0.3.1 the whole job
+                           # took about 20 minutes here.
     defaults:
       run:
         shell: bash
