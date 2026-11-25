@@ -191,8 +191,8 @@ fi
 for c in c11_hang c12_growth; do
   D="$OUT/${c}_fuzzdir"; rm -rf "$D"; mkdir -p "$D"; cp -r "$CPP"/. "$D"/
   case $c in
-    c11_hang)   printf '[fuzz]\ntimeout = 2\n' > "$D/fv.toml" ;;
-    c12_growth) printf '[fuzz]\nrss_limit_mb = 256\n' > "$D/fv.toml" ;;
+    c11_hang)   printf 'timeout = 2\n' >> "$D/fv.toml" ;;          # the fixture's [fuzz] table
+    c12_growth) printf 'rss_limit_mb = 256\n' >> "$D/fv.toml" ;;
   esac
   CMAKE_DIR="$D" campaign $c --time 60 --impl-dir "$VAR/$c"
   rc=$?; j="$OUT/$c/run/fuzz.json"
@@ -277,13 +277,13 @@ fi
 D32="$OUT/c32"; rm -rf "$D32"; mkdir -p "$D32"; bad32=""
 for kv in "max_len = 0" "len_control = -1"; do
   k=${kv%% *}; Z="$D32/$k"; mkdir -p "$Z"; cp -r "$ROOT/fixtures/conservation_cpp/." "$Z/ex"
-  printf '[fuzz]\n%s\n' "$kv" > "$Z/ex/fuzz/fv.toml"
+  printf '%s\n' "$kv" >> "$Z/ex/fuzz/fv.toml"   # the fixture's [fuzz] table
   "$ROOT/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$Z/ex/fuzz" --target diff_transfer \
     --corpus "$Z/corpus" --no-merge --out "$Z/run" > "$Z/run_fuzz.out" 2>&1; zrc=$?
   if [ $zrc -ne 3 ] || ! jq -e --arg k "$k" '.verdict == "ERROR" and (.detail | contains($k))' "$Z/run/fuzz.json" > /dev/null \
      || [ -d "$Z/run/build" ]; then bad32+="$k(exit=$zrc) "; fi
 done
-Z="$D32/set"; mkdir -p "$Z"; cp -r "$ROOT/fixtures/conservation_cpp/." "$Z/ex"; printf '[fuzz]\nmax_len = 300\nlen_control = 0\n' > "$Z/ex/fuzz/fv.toml"
+Z="$D32/set"; mkdir -p "$Z"; cp -r "$ROOT/fixtures/conservation_cpp/." "$Z/ex"; printf 'max_len = 300\nlen_control = 0\n' >> "$Z/ex/fuzz/fv.toml"
 cp -r "$CPP/corpus" "$Z/corpus"
 "$ROOT/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$Z/ex/fuzz" --target diff_transfer \
   --corpus "$Z/corpus" --no-merge --runs 3000 --out "$Z/run" > "$Z/run_fuzz.out" 2>&1; src=$?

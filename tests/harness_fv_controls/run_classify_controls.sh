@@ -253,9 +253,11 @@ PYEOF
 }
 if [ "$have_py" = 1 ]; then
   fresh "$OUT/c73_cpp"; cp -r "$ROOT/fixtures/conservation_cpp/fuzz/corpus" "$OUT/c73_cpp/corpus"
+  # retention is the subject here: the fixture's small budget is raised to the default, 200000 (retain_check)
+  cp -r "$ROOT/fixtures/conservation_cpp/fuzz" "$OUT/c73_cpp/fuzz"; sed -i 's/^retain_runs = .*/retain_runs = 200000/' "$OUT/c73_cpp/fuzz/fv.toml"
   "$ROOT/fuzz/run_fuzz.sh" --lean-project "$ROOT/fixtures/conservation" --lock "$ROOT/locks/conservation.sha256" \
-    --cmake-dir "$ROOT/fixtures/conservation_cpp/fuzz" --target diff_transfer --corpus "$OUT/c73_cpp/corpus" --no-merge \
-    --out "$OUT/c73_cpp/run" --runs 20000 > "$OUT/c73_cpp/run_fuzz.out" 2>&1; rc1=$?
+    --cmake-dir "$OUT/c73_cpp/fuzz" --target diff_transfer --corpus "$OUT/c73_cpp/corpus" --no-merge \
+    --impl-dir "$ROOT/fixtures/conservation_cpp/impl" --out "$OUT/c73_cpp/run" --runs 20000 > "$OUT/c73_cpp/run_fuzz.out" 2>&1; rc1=$?
   w1=$(retain_check "$OUT/c73_cpp/run" 3> "$OUT/c73_cpp/only.txt")
   campaign c73_py python "$P" impl diff_risk "$LOCK" "$LEAN" --runs 20000; rc2=$?
   w2=$(retain_check "$OUT/c73_py/run" 3> "$OUT/c73_py/only.txt")

@@ -1,0 +1,6 @@
+# Per-project settings read by fuzz/run_fuzz.sh.
+[fuzz]
+# The controls that use this fixture test other things than the class-guided retention pass, so its budget
+# is small here (the default is 200000, about 7-8 minutes per passing campaign on a 4-core host). Controls
+# whose subject is retention (c73) set 200000 explicitly; append further keys below, never a second [fuzz].
+retain_runs = 2000
