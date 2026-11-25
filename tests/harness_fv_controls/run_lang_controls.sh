@@ -77,6 +77,10 @@
 #                      processes.with_transactions = 0 and (b) one with no tron_tvm record at all each end
 #                      ERROR (the record write is refused); CLOSE given (c) c34's PASS record with tron_tvm
 #                      null and (d) with with_transactions = 0 each refuses: ERROR "lacks ...", no closure
+#   c109_tron_tvm_replay_drivers  the driver checks run again after the retention replay and the merge: with the
+#                      test hook FV_TEST_HOOK_REPLAY_STATUS forging, after that replay only, the observation of a
+#                      driver that saw another network interface, the run is ERROR; without the hook, and with it
+#                      set to a phase that never happens, PASS (the hook is inert), and a set hook is recorded
 #   c41_tron_tvm_coverage   contract coverage: the faucet plus a branch the generator cannot reach PASSes, and
 #                      the report lists that branch's source line as NOT EXERCISED (labels only)
 #   c49_tron_tvm_itx_drop   internal transactions are compared as an ordered list: a faucet whose withdraw(0)
@@ -350,7 +354,7 @@ else
   echo "c29_evm_pins WRONG solc exit=$rca [$(jq -r .detail "$ja" 2>/dev/null)] runtime exit=$rcb [$(jq -r .detail "$jb" 2>/dev/null)]"; fails=1
 fi
 fi  # evm
-TH="${FV_TRON_TVM_HOME:-$FV_ROOT/tron-tvm}"; F="$ROOT/examples/token-faucet-tron-tvm"; TRON_TVM_ALL="c33_tron_tvm_trc10 c34_tron_tvm_clean c35_tron_tvm_drift c36_tron_tvm_refusals c37_tron_tvm_vendored_tamper c41_tron_tvm_coverage c49_tron_tvm_itx_drop c51_tron_tvm_guidance c56_tron_tvm_roundtrip c57_tron_tvm_build_pins c64_tron_tvm_record"
+TH="${FV_TRON_TVM_HOME:-$FV_ROOT/tron-tvm}"; F="$ROOT/examples/token-faucet-tron-tvm"; TRON_TVM_ALL="c33_tron_tvm_trc10 c34_tron_tvm_clean c35_tron_tvm_drift c36_tron_tvm_refusals c37_tron_tvm_vendored_tamper c41_tron_tvm_coverage c49_tron_tvm_itx_drop c51_tron_tvm_guidance c56_tron_tvm_roundtrip c57_tron_tvm_build_pins c64_tron_tvm_record c109_tron_tvm_replay_drivers"
 fresh() { rm -rf "${1:?}"; mkdir -p "$1"; }  # fresh DIR: an empty directory (refuses an empty argument)
 tron_tvm_campaign() { # tron_tvm_campaign ID DIR IMPL ARGS...  (signed faucet spec)
   local id="$1" dir="$2" impl="$3"; shift 3
@@ -663,6 +667,31 @@ if [ $rc -eq 0 ] && jq -e --arg w "CappedFaucet.sol:$ln " '.verdict == "PASS" an
   echo "c41_tron_tvm_coverage OK PASS; $(jq -r '.tron_tvm.contract_coverage | "\(.blocks_hit)/\(.blocks_total) blocks"' "$j"); NOT EXERCISED includes the unreachable branch at line $ln: $(jq -r --arg w "CappedFaucet.sol:$ln " '[.tron_tvm.contract_coverage.not_exercised[] | select(.at != null and (.at | startswith($w)))][0].at' "$j")"
 else
   echo "c41_tron_tvm_coverage WRONG exit=$rc $(jq -c '{verdict, detail, cov: (.tron_tvm.contract_coverage | {blocks_hit, blocks_total, error})}' "$j" 2>/dev/null)"; fails=1
+fi
+
+# Control 109: the driver checks run again after the retention replay and after the merge. The test hook
+# FV_TEST_HOOK_REPLAY_STATUS forges, after that replay only, the observation a driver seeing another network
+# interface would write. (a) no hook: PASS (the hook is inert when unset); (b) after the retention replay and
+# (c) after the merge: ERROR, a run seen as having had a network; (d) a phase that never happens: PASS, and
+# the hook is recorded (test_hooks), so CLOSE refuses the run.
+r109=""
+tron_tvm_campaign c109a_no_hook "$F" contract --runs 2000 --time 1800; ra=$?
+jq -e '.verdict == "PASS" and .test_hooks == []' "$OUT/c109a_no_hook/run/fuzz.json" > /dev/null && [ $ra -eq 0 ] \
+  || r109+="(a) exit=$ra [$(jq -c '{verdict, detail, test_hooks}' "$OUT/c109a_no_hook/run/fuzz.json" 2>/dev/null | cut -c1-120)]; "
+for k in "b retention 0" "c merge 1"; do
+  set -- $k
+  FV_TEST_HOOK_REPLAY_STATUS="$2" TRON_TVM_MERGE="$3" tron_tvm_campaign "c109${1}_$2" "$F" contract --runs 2000 --time 1800; rc=$?
+  jq -e '.verdict == "ERROR" and (.detail | contains("network interfaces other than lo")) and .test_hooks == ["FV_TEST_HOOK_REPLAY_STATUS"]' \
+    "$OUT/c109${1}_$2/run/fuzz.json" > /dev/null && [ $rc -eq 3 ] \
+    || r109+="($1) exit=$rc [$(jq -c '{verdict, detail, test_hooks}' "$OUT/c109${1}_$2/run/fuzz.json" 2>/dev/null | cut -c1-160)]; "
+done
+FV_TEST_HOOK_REPLAY_STATUS=never tron_tvm_campaign c109d_inert "$F" contract --runs 2000 --time 1800; rd=$?
+jq -e '.verdict == "PASS" and .test_hooks == ["FV_TEST_HOOK_REPLAY_STATUS"]' "$OUT/c109d_inert/run/fuzz.json" > /dev/null && [ $rd -eq 0 ] \
+  && ! grep -q '"test_hook"' "$OUT/c109d_inert/run/tron-tvm/status.jsonl" || r109+="(d) exit=$rd [$(jq -c '{verdict, test_hooks}' "$OUT/c109d_inert/run/fuzz.json" 2>/dev/null)]; "
+if [ -z "$r109" ]; then
+  echo "c109_tron_tvm_replay_drivers OK (a) no hook: PASS; (b) a forged observation after the retention replay, (c) after the merge: ERROR [$(jq -r '.detail | .[0:70]' "$OUT/c109b_retention/run/fuzz.json")]; (d) hook set to a phase that never happens: PASS, nothing forged, recorded in test_hooks"
+else
+  echo "c109_tron_tvm_replay_drivers WRONG $r109"; fails=1
 fi
 fi  # tron-tvm
 exit $fails

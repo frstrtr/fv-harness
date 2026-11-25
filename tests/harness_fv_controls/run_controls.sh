@@ -177,12 +177,12 @@ FUZZ_IDS="c1_fuzz c6_cpp_drift c7_lsan_leak c8_vendored_tamper c9_edge_not_exerc
   c13_classify_env c14_zero_limits c30_draft_not_countable c32_len_limits c38_jobs c39_remote_bundle c40_guards c42_cmake_args
   c43_merge c44_bundle_strict c45_pause_no_hang c46_ssh_localhost c58_remote_same_name c47_run_name c60_runs_time c61_out_unpack
   c48_record_failure c50_bytes_abi c53_merge_failure c54_merge_inner_exit c59_merge_inner_start c62_slow_units_jobs c63_out_lock
-  c65_bundle_target c66_chain_unreachable c67_restart_window c89_retain_artifact c90_retention_recorded"
+  c65_bundle_target c66_chain_unreachable c67_restart_window c89_retain_artifact c90_retention_recorded c108_no_classify_close"
 LANG_IDS="c15_rust_clean c16_rust_drift c17_rust_overflow c18_rust_vendored_tamper c19_rust_profile_off
   c52_py_merge c21_py_clean c22_py_drift c23_py_wide c24_py_vendored_tamper c55_py_oracle_error
   c25_evm_clean c26_evm_drift c27_evm_overflow c28_evm_vendored_tamper c29_evm_pins
   c33_tron_tvm_trc10 c34_tron_tvm_clean c35_tron_tvm_drift c36_tron_tvm_refusals c37_tron_tvm_vendored_tamper
-  c56_tron_tvm_roundtrip c57_tron_tvm_build_pins c64_tron_tvm_record c49_tron_tvm_itx_drop c51_tron_tvm_guidance c41_tron_tvm_coverage"
+  c56_tron_tvm_roundtrip c57_tron_tvm_build_pins c64_tron_tvm_record c49_tron_tvm_itx_drop c51_tron_tvm_guidance c41_tron_tvm_coverage c109_tron_tvm_replay_drivers"
 
 # Control 1 (fuzz leg) and Control 6 (C++ drift): the differential fuzzer (Module 5), and the multi-worker
 # controls.

@@ -83,6 +83,8 @@
 #                 only there) is replayed by the verdict binary: FAIL with the reproducer kept.
 #   c90_retention_recorded  (a) a generation stopped by its time guard is in classes.error; (b) FV_NO_CLASSIFY=1
 #                 is recorded (no classification, no retention), never silent.
+#   c108_no_classify_close  CLOSE of that FV_NO_CLASSIFY=1 campaign is refused; with --reduced-coverage REASON it
+#                 closes, the reason recorded first (after the signer) in closure.json and closure.md.
 #   c59_merge_inner_start  the inner merge process exits at start, before any input (no input to blame;
 #                 libFuzzer exits 0 having merged nothing): ERROR "did not complete in one attempt".
 #   c30_draft_not_countable  a draft (an UNSIGNED spec_lock.sh manifest) can be validated with
@@ -468,6 +470,30 @@ if [ $ra -eq 0 ] && jq -e '.verdict == "PASS" and (.classes.error // "" | contai
   echo "c90_retention_recorded OK (a) time guard: PASS, classes.error [$(jq -r '.classes.error | .[0:90]' "$ja")]; (b) FV_NO_CLASSIFY=1: PASS, recorded [$(jq -r '.classes.skipped | .[0:70]' "$jb")]"
 else
   echo "c90_retention_recorded WRONG (a) exit=$ra $(jq -c '{verdict, err: .classes.error, ret: .classes.retention.error}' "$ja" 2>/dev/null | cut -c1-200); (b) exit=$rb $(jq -c '{verdict, classes}' "$jb" 2>/dev/null | cut -c1-200)"; fails=1
+fi
+
+# Control 108: a campaign run with FV_NO_CLASSIFY=1 (c90 (b)) never closes as a full pass: CLOSE is refused, and
+# with --reduced-coverage REASON it closes with that reason recorded first in closure.json and closure.md.
+D108="$OUT/c108"; rm -rf "$D108"; mkdir -p "$D108/audit"; cp -r "$FIX" "$D108/proj"; rm -rf "$D108/proj/.lake"
+echo '{"verdict": "PASS", "stages": {}}' > "$D108/audit/verdict.json"
+FT=(python3 -I "$ROOT/scripts/formal_task.py"); T108="c108-init-$$"
+"${FT[@]}" init "$T108" --project "$D108/proj" --lock "$LOCK" --cmake-dir "$CPP" --target diff_transfer --fuzz-runs 1000 > "$D108/task.out" 2>&1
+r108=(); for k in plain reduced; do
+  tk="c108-$k-$$"; mkdir -p "$FV_ROOT/tasks/$tk"
+  jq --arg a "$D108/audit" --arg c "$OUT/c90b_no_classify/run" --arg t "$tk" '.task = $t | .state = "CLOSE" | .last_audit = $a | .last_couple = $c' \
+    "$FV_ROOT/tasks/$T108/state.json" > "$FV_ROOT/tasks/$tk/state.json"
+  if [ $k = plain ]; then "${FT[@]}" close "$tk" >> "$D108/task.out" 2>&1; else "${FT[@]}" close "$tk" --reduced-coverage "c108: a control" >> "$D108/task.out" 2>&1; fi
+  r108+=("$?:$(jq -r .state "$FV_ROOT/tasks/$tk/state.json" 2>/dev/null):$([ -e "$FV_ROOT/tasks/$tk/closure.json" ] && echo closure || echo none)")
+  cp -r "$FV_ROOT/tasks/$tk" "$D108/"; rm -rf "${FV_ROOT:?}/tasks/${tk:?}"
+done
+cp -r "$FV_ROOT/tasks/$T108" "$D108/" 2>/dev/null; rm -rf "${FV_ROOT:?}/tasks/${T108:?}"
+cj="$D108/c108-reduced-$$/closure.json"
+if [ "${r108[0]}" = "3:ERROR:none" ] && grep -q 'CLOSE refused: the campaign ran with FV_NO_CLASSIFY=1' "$D108/c108-plain-$$/history.jsonl" "$D108/task.out" 2>/dev/null \
+   && [ "${r108[1]%%:*}" = 0 ] && [ "$(jq -r 'keys_unsorted[1]' "$cj" 2>/dev/null)" = reduced_coverage ] \
+   && jq -e '.reduced_coverage.reason == "c108: a control"' "$cj" > /dev/null && sed -n 3p "$D108/c108-reduced-$$/closure.md" | grep -q '^REDUCED COVERAGE: c108: a control'; then
+  echo "c108_no_classify_close OK CLOSE of an FV_NO_CLASSIFY=1 campaign: refused (ERROR, no closure); with --reduced-coverage: closed, reason recorded second in closure.json (after the signer) and at the head of closure.md"
+else
+  echo "c108_no_classify_close WRONG plain=${r108[0]} reduced=${r108[1]} keys=$(jq -c 'keys_unsorted[0:3]' "$cj" 2>/dev/null) md3=[$(sed -n 3p "$D108/c108-reduced-$$/closure.md" 2>/dev/null | cut -c1-80)] [$(tail -2 "$D108/task.out" | tr '\n' ' ' | cut -c1-160)]"; fails=1
 fi
 
 D65="${OUT:?}/c65"; rm -rf "${D65:?}"; mkdir -p "$D65"

@@ -468,10 +468,24 @@ def cmd_close(a):
         t.move(st, "ERROR", f"CLOSE refused: not countable (fuzz verdict {fz.get('verdict')!r}, draft "
                             f"{fz.get('draft')!r}, gate verdict {verdict.get('verdict')!r})")
         return 3
+    th = fz.get("test_hooks") or []
+    if th:  # test hooks forge observations for controls, never for a countable campaign
+        t.move(st, "ERROR", f"CLOSE refused: the campaign ran with test hooks {', '.join(th)}")
+        return 3
     go = (fz.get("remote") or {}).get("guard_overrides") or []
     if go:  # fake guard probes or thresholds are for controls, never for a countable campaign
         t.move(st, "ERROR", f"CLOSE refused: the campaign ran with guard overrides {', '.join(go)}")
         return 3
+    # FV_NO_CLASSIFY=1: no classification and no class-guided retention ran, so the campaign compared fewer
+    # inputs than a full one. Never an unqualified CLOSE: only with --reduced-coverage REASON, which the
+    # closure records first, next to the signer.
+    reduced = None
+    if "FV_NO_CLASSIFY=1" in str((fz.get("classes") or {}).get("skipped") or ""):
+        if not getattr(a, "reduced_coverage", None):
+            t.move(st, "ERROR", "CLOSE refused: the campaign ran with FV_NO_CLASSIFY=1 (no classification, no class-guided "
+                                "retention); close it only with --reduced-coverage REASON, which the closure records")
+            return 3
+        reduced = {"reason": a.reduced_coverage, "fuzz_record": (fz.get("classes") or {}).get("skipped")}
     if fz.get("lang") == "tron-tvm":  # the reference must be named and must have run
         tt = fz.get("tron_tvm") or {}
         miss = [k for k, ok in (("java_tron_commit", tt.get("java_tron_commit")),
@@ -493,6 +507,7 @@ def cmd_close(a):
     bundle = {
         # First on purpose: the operator compares this fingerprint with the one they stated.
         "spec_lock_signer": signer,
+        **({"reduced_coverage": reduced} if reduced else {}),
         "closed_tree": closed_tree(proj, [pathlib.Path(st["cpp"]["cmake_dir"]) / "build"]),
         "harness_commit": (hs := harness_state())["commit"], "harness": hs,
         "task": st["task"], "closed": now(),
@@ -526,6 +541,7 @@ def cmd_close(a):
     md = [f"SPEC-LOCK SIGNER: {signer.get('fingerprint', '-')} ({signer.get('principal', '-')}; "
           f"pinned {signer.get('pinned', '-')}, match={signer.get('match', '-')}). Compare with the fingerprint "
           "the operator stated; a report whose fingerprint differs is void.", "",
+          *([f"REDUCED COVERAGE: {reduced['reason']} ({reduced['fuzz_record']})", ""] if reduced else []),
           f"# Closure report: {st['task']}", "", f"Closed {bundle['closed']}. Gate **{verdict.get('verdict')}**, "
           f"fuzz **{fz.get('verdict')}**.", "",
           f"Closed tree: `{bundle['closed_tree'].get('commit')}` ({bundle['closed_tree'].get('source')}"
@@ -622,8 +638,11 @@ def main():
     p = sub.add_parser("set"); p.add_argument("task")
     p.add_argument("--budget", type=int); p.add_argument("--max-attempts", type=int)
     p.add_argument("--same-failure-wall", choices=("on", "off"))
-    for c in ("spec-lock", "discharge", "audit", "couple", "close", "run", "status"):
+    for c in ("spec-lock", "discharge", "audit", "couple", "run", "status"):
         sub.add_parser(c).add_argument("task")
+    p = sub.add_parser("close"); p.add_argument("task")
+    p.add_argument("--reduced-coverage", metavar="REASON",
+                   help="close a campaign run with FV_NO_CLASSIFY=1; REASON is recorded first in the closure")
     p = sub.add_parser("decompose"); p.add_argument("task"); p.add_argument("--by", required=True)
     p = sub.add_parser("tree", help="print the closed_tree record of a project directory (no task)")
     p.add_argument("project")

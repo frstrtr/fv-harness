@@ -195,6 +195,17 @@ RETAIN_RUNS=$(cfg retain_runs 200000); RETAIN_SEED=$(cfg retain_seed 1); BAD_RET
 [[ "$RETAIN_SEED" =~ ^[1-9][0-9]{0,9}$ ]] && [ "$RETAIN_SEED" -lt 4294967296 ] || BAD_RETAIN+="retain_seed=$RETAIN_SEED "
 [ -z "$BAD_RETAIN" ] || { RETAIN_RUNS=0; RETAIN_SEED=1; }
 RETAIN_JSON=null
+# Test hooks (FV_TEST_HOOK_*): for controls only. Each one set is recorded in fuzz.json (test_hooks), and CLOSE
+# refuses such a run. Unset, no hook changes anything: every hook below is a no-op unless its variable is set.
+#   FV_TEST_HOOK_REPLAY_STATUS=retention|merge  (--lang tron-tvm) after that replay, append one forged "ready"
+#     observation (a driver that saw an interface other than lo), as a driver started in that replay would write
+#     it; the driver checks that follow that replay must then refuse the run.
+TEST_HOOKS_JSON=$(env | sed -n 's/^\(FV_TEST_HOOK_[A-Z0-9_]*\)=.*/\1/p' | LC_ALL=C sort | jq -Rsc 'split("\n") | map(select(. != ""))')
+test_hook_replay_status() { # test_hook_replay_status PHASE
+  [ "$lang" = tron-tvm ] && [ -n "${FV_TEST_HOOK_REPLAY_STATUS:-}" ] && [ "$FV_TEST_HOOK_REPLAY_STATUS" = "$1" ] || return 0
+  jq -nc --arg c "$(jq -r -s '[.[] | select(.event == "ready") | .config][0] // ""' "$RUN/tron-tvm/status.jsonl" 2>/dev/null)" \
+    '{event: "ready", pid: 0, driver: "ready (test hook)", config: $c, net_ifaces: ["lo", "test0"], test_hook: true}' >> "$RUN/tron-tvm/status.jsonl"
+}
 RUN="${out:-$FV_ROOT/runs/fuzz-$target-$(date +%Y%m%dT%H%M%S)-$$}"
 mkdir -p "$RUN"; RUN="$(cd "$RUN" && pwd)"
 # One gate per run directory, for the gate's whole lifetime: a second run on the same --out would delete
@@ -243,12 +254,13 @@ verdict() { # verdict EXIT VERDICT DETAIL
     --slurpfile remotef "$J/remote.json" \
     --argjson lim "{\"timeout_s\":$T_OUT,\"rss_limit_mb\":$RSS_MB,\"malloc_limit_mb\":$MAL_MB,\"report_slow_units_s\":$SLOW_S,\"max_len\":${MAX_LEN:-null},\"len_control\":${LEN_CTL:-null}}" \
     --arg slow "$(ls "$RUN"/artifacts/ 2>/dev/null | grep 'slow-unit-' | tr '\n' ' ')" \
+    --argjson hooks "${TEST_HOOKS_JSON:-[]}" \
     '$evmf[0] as $evm | $clsf[0] as $cls | $workersf[0] as $workers | $remotef[0] as $remote |
     (if $draft != "" then {draft:$draft} else {} end) + {lang:$lang, verdict:$v, exit:$e, detail:$d, target:$t, runs:$runs, max_total_time:$secs, impl_dir:$impl,
       corpus:$corpus, lock_digest:$lock, campaign_seconds:$el, mismatch:$mm, artifact:$art, stats:$stats,
       jobs:$jobs, workers:$workers, total_executions:$total, remote:$remote,
       vendored:$vend, classes:$cls, cmake_args:$cmk, evm:(if $lang == "tron-tvm" then null else $evm end),
-      tron_tvm:(if $lang == "tron-tvm" then $evm else null end), limits:$lim, slow_units:($slow | split(" ") | map(select(. != "")))}' \
+      tron_tvm:(if $lang == "tron-tvm" then $evm else null end), limits:$lim, slow_units:($slow | split(" ") | map(select(. != ""))), test_hooks:$hooks}' \
     > "$RUN/fuzz.json.tmp" && jq -e '.verdict and .lang and (.limits | type) == "object"
         and (.lang != "tron-tvm" or (.verdict | test("PASS") | not)
              or (.tron_tvm.java_tron_commit and .tron_tvm.chain_profile.sha256 and .tron_tvm.driver_config
@@ -968,6 +980,7 @@ retention() {
   fi
 }
 retention
+test_hook_replay_status retention
 tron_tvm_observed   # the retention replay's drivers too
 
 # 5. Corpus persistence.
@@ -999,6 +1012,7 @@ if [ "$merge" -eq 1 ]; then
     verdict 3 ERROR "corpus merge did not complete in one attempt: $(grep -m1 -vE '^(MERGE-OUTER|INFO|WARNING|#)' "$RUN/merge.log" | cut -c1-160) ($(grep -c '^MERGE-OUTER: attempt' "$RUN/merge.log") attempts)"
   fi
 fi
+[ "$merge" -eq 1 ] && test_hook_replay_status merge
 tron_tvm_observed   # and the merge's
 # 6. Edge-case classification (labels only).
 classify corpus
