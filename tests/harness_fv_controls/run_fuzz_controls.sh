@@ -76,7 +76,13 @@
 #                 for a worker declared 2.39: BLOCKED, no worker started; (b) the fixture built with the
 #                 pinned 2.39 sysroot: PASS, its bundle needs glibc <= 2.39 and no GLIBCXX; (c) the 2.42
 #                 caller with the sysroot: ERROR (it does not compile); (d) an ssh worker with no declared
-#                 target: ERROR before any ssh connection. SKIPPED without FV_BUILD_SYSROOT on the host.
+#                 target: ERROR before any ssh connection; (e) a target that is not a version
+#                 ("latest"), (f) objdump failing on the bundle: ERROR before shipping. SKIPPED without
+#                 FV_BUILD_SYSROOT on the host.
+#   c89_retain_artifact  an input on which the retention generation stops (a trap in the binding, reached
+#                 only there) is replayed by the verdict binary: FAIL with the reproducer kept.
+#   c90_retention_recorded  (a) a generation stopped by its time guard is in classes.error; (b) FV_NO_CLASSIFY=1
+#                 is recorded (no classification, no retention), never silent.
 #   c59_merge_inner_start  the inner merge process exits at start, before any input (no input to blame;
 #                 libFuzzer exits 0 having merged nothing): ERROR "did not complete in one attempt".
 #   c30_draft_not_countable  a draft (an UNSIGNED spec_lock.sh manifest) can be validated with
@@ -433,6 +439,37 @@ else
   echo "c63_out_lock WRONG second exit=$rb [$(tail -1 "$D63/b.out" | cut -c1-100)] overlap=$alive first exit=$ra $(jq -c '{verdict, runs}' "$D63/run/fuzz.json" 2>/dev/null)"; fails=1
 fi
 
+# Control 89: an input on which the retention generation itself stops is compared by the verdict binary. The
+# binding traps on one 64-bit amount (in both builds); the campaign's own 10 executions do not reach it, the
+# retention generation (value profiling) does and stops there: the verdict binary must replay that input, so
+# the run FAILs with it kept, not PASS with only a classifier error.
+V89="$OUT/c89_fuzzdir"; rm -rf "$V89"; mkdir -p "$V89"; cp -r "$CPP"/. "$V89"/
+sed -i 's|  return Op{fvfuzz::pick_u64(in), fvfuzz::pick_u64(in)};|  Op o{fvfuzz::pick_u64(in), fvfuzz::pick_u64(in)}; if (o.amt == 0x5EED5EED5EEDull) __builtin_trap();  // c89\n  return o;|' "$V89/binding.hpp"
+sed -i 's/^retain_runs = .*/retain_runs = 200000/' "$V89/fv.toml"
+grep -q '// c89' "$V89/binding.hpp" || echo "c89 setup: generator line not found" >&2
+CMAKE_DIR="$V89" campaign c89_retain_artifact --runs 10 --impl-dir "$ROOT/fixtures/conservation_cpp/impl"
+rc=$?; j="$OUT/c89_retain_artifact/run/fuzz.json"
+ga=$(jq -r '.classes.retention.generation_artifacts // [] | join(" ")' "$j" 2>/dev/null)
+if [ $rc -eq 1 ] && jq -e '(.detail | contains("retention replay")) and ((.classes.retention.generation_artifacts // []) | length) >= 1' "$j" > /dev/null \
+   && ls "$OUT/c89_retain_artifact/run/artifacts/" 2>/dev/null | grep -q '^retain-' && ! grep -q 'deadly signal' "$OUT/c89_retain_artifact/run/campaign.log"; then
+  echo "c89_retain_artifact OK the generation stopped on [$ga]; the verdict binary replayed it: FAIL ($(jq -r '.detail | .[0:110]' "$j")), reproducer kept"
+else
+  echo "c89_retain_artifact WRONG exit=$rc $(jq -c '{verdict, detail, ret: (.classes.retention | {error, generation_artifacts}), err: .classes.error}' "$j" 2>/dev/null | cut -c1-400)"; fails=1
+fi
+
+# Control 90: a retention pass that did not run in full is never silent. (a) The time guard stops the generation
+# (FV_RETAIN_GUARD_S=1, budget 200000): classes.error names it. (b) FV_NO_CLASSIFY=1: the record says that
+# neither classification nor retention ran.
+V90="$OUT/c90_fuzzdir"; rm -rf "$V90"; mkdir -p "$V90"; cp -r "$CPP"/. "$V90"/; sed -i 's/^retain_runs = .*/retain_runs = 200000/' "$V90/fv.toml"
+FV_RETAIN_GUARD_S=1 CMAKE_DIR="$V90" campaign c90a_retain_guard --runs 1000; ra=$?; ja="$OUT/c90a_retain_guard/run/fuzz.json"
+FV_NO_CLASSIFY=1 campaign c90b_no_classify --runs 1000; rb=$?; jb="$OUT/c90b_no_classify/run/fuzz.json"
+if [ $ra -eq 0 ] && jq -e '.verdict == "PASS" and (.classes.error // "" | contains("retention: the generation stopped after")) and .classes.retention.complete == false' "$ja" > /dev/null \
+   && [ $rb -eq 0 ] && jq -e '.verdict == "PASS" and (.classes.skipped // "" | contains("FV_NO_CLASSIFY=1")) and .classes.retention.skipped == "FV_NO_CLASSIFY=1"' "$jb" > /dev/null; then
+  echo "c90_retention_recorded OK (a) time guard: PASS, classes.error [$(jq -r '.classes.error | .[0:90]' "$ja")]; (b) FV_NO_CLASSIFY=1: PASS, recorded [$(jq -r '.classes.skipped | .[0:70]' "$jb")]"
+else
+  echo "c90_retention_recorded WRONG (a) exit=$ra $(jq -c '{verdict, err: .classes.error, ret: .classes.retention.error}' "$ja" 2>/dev/null | cut -c1-200); (b) exit=$rb $(jq -c '{verdict, classes}' "$jb" 2>/dev/null | cut -c1-200)"; fails=1
+fi
+
 D65="${OUT:?}/c65"; rm -rf "${D65:?}"; mkdir -p "$D65"
 t65() { # t65 NAME IMPL [env...] : one --remote local:1 run of the fixture against IMPL
   local n="$1" impl="$2"; shift 2; mkdir -p "$D65/$n"; cp -r "$CPP/corpus" "$D65/$n/corpus"
@@ -460,8 +497,15 @@ else
     --cmake-dir "$CPP" --target diff_transfer --corpus "$D65/d/corpus" --no-merge --jobs 1 --remote ssh:NOTARGET:1 --runs 2000 --out "$D65/d/run" > "$D65/d/out" 2>&1; rd=$?
   [ $rd -eq 3 ] && jq -e '.detail | test("has no glibc / libstdc\\+\\+ target")' "$D65/d/run/fuzz.json" > /dev/null && [ ! -e "$D65/d/run/ssh-ctl" ] \
     || r65+="(d) exit=$rd [$(jq -r .detail "$D65/d/run/fuzz.json" 2>/dev/null | cut -c1-100)] "
+  t65 e "$ROOT/fixtures/conservation_cpp/impl" FV_WORKER_GLIBC_MAX_LOCAL=latest FV_WORKER_GLIBCXX_MAX_LOCAL=3.4.33; re=$?   # not a version
+  [ $re -eq 3 ] && jq -e '.detail | test("FV_WORKER_GLIBC_MAX_LOCAL=\"latest\" .* is not a version")' "$D65/e/run/fuzz.json" > /dev/null \
+    && [ ! -e "$D65/e/run/remote-local" ] || r65+="(e) exit=$re [$(jq -r .detail "$D65/e/run/fuzz.json" 2>/dev/null | cut -c1-100)] "
+  mkdir -p "$D65/f/shim"; printf '#!/bin/sh\necho "objdump: c65 shim: cannot read" >&2\nexit 1\n' > "$D65/f/shim/objdump"; chmod +x "$D65/f/shim/objdump"
+  t65 f "$ROOT/fixtures/conservation_cpp/impl" PATH="$D65/f/shim:$PATH" "${TGT[@]}"; rf=$?   # objdump fails: not "needs nothing"
+  [ $rf -eq 3 ] && jq -e '.detail | test("objdump -T could not read")' "$D65/f/run/fuzz.json" > /dev/null \
+    && [ ! -e "$D65/f/run/remote-local" ] || r65+="(f) exit=$rf [$(jq -r .detail "$D65/f/run/fuzz.json" 2>/dev/null | cut -c1-100)] "
   if [ -z "$r65" ]; then
-    echo "c65_bundle_target OK (a) glibc 2.42 caller, host build, 2.39 worker: BLOCKED before shipping [$(jq -r .detail "$ja" | cut -c1-90)]; (b) with the sysroot: PASS, bundle needs glibc $gb and no GLIBCXX; (c) the 2.42 caller with the sysroot: does not build; (d) ssh worker without a target: ERROR before ssh"
+    echo "c65_bundle_target OK (a) glibc 2.42 caller, host build, 2.39 worker: BLOCKED before shipping [$(jq -r .detail "$ja" | cut -c1-90)]; (b) with the sysroot: PASS, bundle needs glibc $gb and no GLIBCXX; (c) the 2.42 caller with the sysroot: does not build; (d) ssh worker without a target: ERROR before ssh; (e) a target that is not a version, (f) objdump failing: ERROR before shipping"
   else
     echo "c65_bundle_target WRONG $r65"; fails=1
   fi

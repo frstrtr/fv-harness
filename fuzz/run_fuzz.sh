@@ -567,7 +567,8 @@ export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
 export FV_FUZZ_ARTIFACT_DIR="$RUN/artifacts"
 
 classify() { # classify corpus|findings — labels only; sets CLASSES_JSON, never the verdict
-  [ "${FV_NO_CLASSIFY:-0}" = 1 ] && return 0
+  # FV_NO_CLASSIFY=1 is recorded, never silent: no labels, and no retention inputs were generated or compared.
+  [ "${FV_NO_CLASSIFY:-0}" = 1 ] && { CLASSES_JSON='{"labels_only": true, "skipped": "FV_NO_CLASSIFY=1 in the environment: no classification, and the class-guided retention pass did not run (no retained inputs were compared)", "retention": {"runs": 0, "skipped": "FV_NO_CLASSIFY=1"}}'; return 0; }
   [ -n "$BIN_CLS" ] || { CLASSES_JSON='{"labels_only": true, "error": "no classify build (add_diff_fuzzer from an older LeanOracle.cmake?)"}'; return 0; }
   local C="$RUN/classify" hdr=() src=() fnd=() rrc=0
   mkdir -p "$C"; rm -f "$C/log.jsonl"
@@ -591,9 +592,10 @@ classify() { # classify corpus|findings — labels only; sets CLASSES_JSON, neve
     CLASSES_JSON=$(jq -c --arg e "the classification replay exited $rrc, so only part of the corpus is classified: ${why:-see classify/replay.log}" \
       '.error = ((if .error then .error + "; " else "" end) + $e)' <<< "$CLASSES_JSON" 2>/dev/null || echo "$CLASSES_JSON")
   fi
-  # A retention generation that stopped on its own error (a describe() or predicate that raised) is a classifier error too.
+  # Any retention error (a generation that stopped on its own error, one stopped by the time guard, a classify
+  # build without retention) means the classification is not what a complete pass would give: classes.error.
   CLASSES_JSON=$(jq -c --argjson r "$RETAIN_JSON" '. + {retention: $r}
-    | if ($r.error // "" | startswith("the generation exited")) then .error = ((if .error then .error + "; " else "" end) + "retention: " + $r.error) else . end' \
+    | if (($r // {}).error // null) != null then .error = ((if .error then .error + "; " else "" end) + "retention: " + $r.error) else . end' \
     <<< "$CLASSES_JSON" 2>/dev/null || echo "$CLASSES_JSON")
 }
 
@@ -677,13 +679,22 @@ if [ -n "$remote" ]; then
   BD="$RUN/bundle"; rm -rf "${BD:?}"; mkdir -p "$BD/bin" "$BD/lib" "$BD/corpus"
   cp "$BIN" "$BD/bin/fuzzer"; cp "$LEAN_TC/lib/lean/libleanshared.so" "$BD/lib/"
   cp "$HERE/worker/fv_worker.sh" "$HERE/worker/fv_guard.sh" "$BD/"; find "$corpus" -maxdepth 1 -type f -exec cp -t "$BD/corpus" {} +
-  { echo "glibc_max $(objdump -T "$BD/bin/fuzzer" "$BD/lib/libleanshared.so" | grep -oE 'GLIBC_[0-9.]+' | sed 's/GLIBC_//' | sort -V | tail -1)"
-    echo "glibcxx_max $(objdump -T "$BD/bin/fuzzer" | grep -oE 'GLIBCXX_[0-9.]+' | sed 's/GLIBCXX_//' | sort -V | tail -1)"; } > "$BD/REQUIRES"
+  # The symbol versions are read with objdump, which must succeed: a failed read would look like "needs nothing".
+  dyn=$(objdump -T "$BD/bin/fuzzer" "$BD/lib/libleanshared.so" 2> "$RUN/objdump.err") \
+    || verdict 3 ERROR "objdump -T could not read the bundle's binaries: $(head -c 200 "$RUN/objdump.err")"
+  dynx=$(objdump -T "$BD/bin/fuzzer" 2>> "$RUN/objdump.err") || verdict 3 ERROR "objdump -T could not read the fuzzer: $(head -c 200 "$RUN/objdump.err")"
+  { echo "glibc_max $(grep -oE 'GLIBC_[0-9.]+' <<< "$dyn" | sed 's/GLIBC_//' | sort -V | tail -1)"
+    echo "glibcxx_max $(grep -oE 'GLIBCXX_[0-9.]+' <<< "$dynx" | sed 's/GLIBCXX_//' | sort -V | tail -1)"; } > "$BD/REQUIRES"
   # The worker's target, checked here, before anything is shipped or any ssh connection opens: an ssh
   # worker must declare it (FV_WORKER_GLIBC_MAX_<NAME>, FV_WORKER_GLIBCXX_MAX_<NAME>); a local one may
   # (_LOCAL). A bundle needing newer symbol versions than the target is BLOCKED.
   tn=${rname:-LOCAL}; gv="FV_WORKER_GLIBC_MAX_$tn"; xv="FV_WORKER_GLIBCXX_MAX_$tn"
   need_g=$(sed -n 's/^glibc_max //p' "$BD/REQUIRES"); need_x=$(sed -n 's/^glibcxx_max //p' "$BD/REQUIRES")
+  # A dynamically linked fuzzer always needs some GLIBC_ version (GLIBCXX_ may be absent: libstdc++ linked statically).
+  [ -n "$need_g" ] || verdict 3 ERROR "no GLIBC_ symbol version found in the bundle's binaries (objdump -T): the requirement cannot be checked"
+  for v in "$gv" "$xv"; do   # a target is a version: digits and dots (anything else would compare arbitrarily)
+    [ -z "${!v:-}" ] || [[ "${!v}" =~ ^[0-9]+(\.[0-9]+)*$ ]] || verdict 3 ERROR "$v=\"${!v}\" (config/hosts.env) is not a version such as 2.39 or 3.4.32"
+  done
   if [ -n "$rname" ] && { [ -z "${!gv:-}" ] || [ -z "${!xv:-}" ]; }; then
     verdict 3 ERROR "worker $rname has no glibc / libstdc++ target ($gv, $xv in config/hosts.env): the gate checks a bundle against it before shipping"
   fi
@@ -869,7 +880,10 @@ if [ -n "$art" ]; then
   kind=$(fail_kind "$RUN/campaign.log")
   verdict 1 FAIL "${kind:-a failing input was saved} (artifact ${art% }; no batch exit reported it)"
 fi
-if [ "$lang" = tron-tvm ]; then  # a PASS needs the TRON-TVM to have run: observed, not assumed
+# A PASS needs the TRON-TVM to have run: observed, not assumed. Every driver any verdict-binary process started
+# (campaign, retention replay, merge) appends to status.jsonl, so this runs again after each of them.
+tron_tvm_observed() {
+  [ "$lang" = tron-tvm ] || return 0
   S="$RUN/tron-tvm/status.jsonl"
   nready=$(jq -s '[.[] | select(.event == "ready")] | length' "$S" 2>/dev/null || echo 0)
   ndebug=$(jq -s '[.[] | select(.event == "ready" and (.config | split(" ") | index("debug=true")))] | length' "$S" 2>/dev/null || echo 0)
@@ -888,7 +902,8 @@ if [ "$lang" = tron-tvm ]; then  # a PASS needs the TRON-TVM to have run: observ
     '. + {network: "none (observed: only lo in every fuzz process, \($n) of \($n))", driver_config: $c,
           cpu_time_limit: (if ($c | contains("debug=true")) then "disabled (--debug, observed in every driver); OUT_OF_TIME not covered" else "UNKNOWN" end),
           processes: {driver_starts: $n, with_transactions: $k}}' <<< "$EVM_JSON")
-fi
+}
+tron_tvm_observed
 
 # 4b. Class-guided retention. libFuzzer's corpus keeps only inputs that add coverage, so an edge class the
 # campaign generated can be missing from it. The classify build (oracle only, never the implementation)
@@ -901,8 +916,8 @@ fi
 # build without retention support (an older vendored fv_classify.hpp), or a generation that did not
 # complete its budget, is recorded and changes nothing (the inputs it kept are still replayed).
 retention() {
-  [ "${FV_NO_CLASSIFY:-0}" = 1 ] && return 0
-  [ -n "$BIN_CLS" ] || return 0
+  [ "${FV_NO_CLASSIFY:-0}" = 1 ] && { RETAIN_JSON='{"runs": 0, "skipped": "FV_NO_CLASSIFY=1"}'; return 0; }
+  [ -n "$BIN_CLS" ] || { RETAIN_JSON='{"runs": 0, "skipped": "no classify build"}'; return 0; }
   local C="$RUN/classify" K="$RUN/classify/retained" W="$RUN/classify/retain-work" src=("$corpus") rc rr n done_ ok=true
   [ "$RETAIN_RUNS" -gt 0 ] || { RETAIN_JSON='{"runs": 0, "skipped": "retain_runs = 0"}'; return 0; }
   mkdir -p "$C"; rm -rf "$K" "$W"; mkdir -p "$K" "$W"
@@ -923,13 +938,22 @@ retention() {
   elif [ "${done_:-0}" -lt "$RETAIN_RUNS" ]; then
     err=$(jq -Rn --arg t "the generation stopped after ${done_:-0} of $RETAIN_RUNS executions (time guard): not reproducible" '$t'); ok=false
   fi
+  # An input on which the generation itself stopped (libFuzzer's crash-, timeout-, oom- or leak- artifact) was
+  # never compared: the verdict binary replays it with the retained inputs. If the verdict binary fails on it,
+  # that is a finding; if not, the stop was the classifier's own (a describe() or predicate that raised).
+  local A="$C/retain-replay-set" arts
+  rm -rf "$A"; mkdir -p "$A"
+  arts=$(find "$C" -maxdepth 1 -type f -name 'retain-artifact-*' ! -name '*slow-unit-*' -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')
+  for f in "$K"/* $(for a in $arts; do echo "$C/$a"; done); do [ -f "$f" ] && cp "$f" "$A/"; done
   RETAIN_JSON=$(jq -nc --argjson runs "$RETAIN_RUNS" --argjson seed "$RETAIN_SEED" --argjson done "${done_:-0}" --argjson err "$err" \
-    --argjson complete "$ok" --arg hashes "$(find "$K" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')" \
+    --argjson complete "$ok" --arg hashes "$(find "$K" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')" --arg arts "$arts" \
     '{runs: $runs, seed: $seed, executions: $done, complete: $complete, error: $err, value_profile: true,
-      retained: ($hashes | split(" ") | map(select(. != ""))), replayed: null}')
+      retained: ($hashes | split(" ") | map(select(. != ""))), generation_artifacts: ($arts | split(" ") | map(select(. != ""))),
+      replayed: null}')
+  n=$(find "$A" -maxdepth 1 -type f | wc -l)
   [ "$n" -gt 0 ] || return 0
-  # The verdict binary compares every retained input.
-  capped "$BIN" "${LIMITS[@]}" -runs=0 -artifact_prefix="$RUN/artifacts/retain-" "$K" > "$RUN/retain-replay.log" 2>&1
+  # The verdict binary compares every retained input, and every input the generation stopped on.
+  capped "$BIN" "${LIMITS[@]}" -runs=0 -artifact_prefix="$RUN/artifacts/retain-" "$A" > "$RUN/retain-replay.log" 2>&1
   rr=$?
   classify_line_in "$RUN/retain-replay.log" && verdict 3 ERROR "the retention replay ran a classify build, which never compares"
   RETAIN_JSON=$(jq -c --argjson n "$n" '.replayed = $n' <<< "$RETAIN_JSON")
@@ -944,6 +968,7 @@ retention() {
   fi
 }
 retention
+tron_tvm_observed   # the retention replay's drivers too
 
 # 5. Corpus persistence.
 # The merge re-runs every input in a fresh inner process. A failure there is a finding: libFuzzer would
@@ -974,6 +999,7 @@ if [ "$merge" -eq 1 ]; then
     verdict 3 ERROR "corpus merge did not complete in one attempt: $(grep -m1 -vE '^(MERGE-OUTER|INFO|WARNING|#)' "$RUN/merge.log" | cut -c1-160) ($(grep -c '^MERGE-OUTER: attempt' "$RUN/merge.log") attempts)"
   fi
 fi
+tron_tvm_observed   # and the merge's
 # 6. Edge-case classification (labels only).
 classify corpus
 verdict 0 PASS "no mismatch"

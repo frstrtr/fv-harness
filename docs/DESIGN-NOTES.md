@@ -184,19 +184,29 @@ that gap:
   refused), an **execution budget** (`retain_runs`, default 200000), value profiling and
   `-reload=0`, and keeps the first input that hits each class. Python runs with fixed string
   hashing. The same binary, corpus, seed and budget give the same retained set.
-- The **verdict binary** then replays the retained inputs, under the rules of the corpus replay:
-  a finding is FAIL with the reproducer kept, and an executor failure is ERROR. Retention only
-  adds compared inputs; it never removes one.
+- The **verdict binary** then replays the retained inputs, and any input on which the generation
+  itself stopped (libFuzzer's crash, timeout, OOM or leak artifact: such an input was never
+  compared), under the rules of the corpus replay: a finding is FAIL with the reproducer kept, and
+  an executor failure is ERROR. Retention only adds compared inputs; it never removes one.
 - `fuzz.json` (`classes.retention`) and the closure record the budget, the seed, the executions
   done, whether the budget completed, and every retained input's hash. Retained inputs are not
   persisted: the next run regenerates them.
 
 NOT EXERCISED then reads "not generated in that budget". A generation stopped by its time guard
 (`FV_RETAIN_GUARD_S`, default 3600 s) is recorded as incomplete and not reproducible. Its inputs
-are still replayed, and a finding among them is still a FAIL. A classify build without retention
-support (an older vendored `fv_classify.hpp`) is recorded and changes nothing. Controls:
+are still replayed, and a finding among them is still a FAIL. Every retention error (a stopped
+generation, the time guard, a classify build without retention support such as an older vendored
+`fv_classify.hpp`) is also written to `classes.error`, so the classification is never shown as
+complete. `FV_NO_CLASSIFY=1` is recorded in `fuzz.json` (`classes.skipped`, `classes.retention.skipped`):
+neither classification nor retention ran. Controls:
 - c73: a class hit only by a retained input is not NOT EXERCISED;
-- c74: a finding that only the retention pass reaches FAILs, with the same reproducer in three runs.
+- c74: a finding that only the retention pass reaches FAILs, with the same reproducer in three runs;
+- c89: an input on which the generation stops is replayed by the verdict binary, and FAILs;
+- c90: a time-guard stop is in `classes.error`, and `FV_NO_CLASSIFY=1` is recorded.
+
+The control suite's C++ fixture sets `[fuzz] retain_runs = 2000` (`fixtures/conservation_cpp/fuzz/fv.toml`):
+its controls test other things, and the default budget made every passing campaign about 7–8 minutes
+longer. The controls whose subject is retention (c73, c89, c90) set 200000.
 
 A binding whose own code is not deterministic (for example Rust `HashMap` iteration that steers
 control flow) can make the retained set vary between runs. The recorded hashes show it.
