@@ -440,14 +440,14 @@ else
 fi
 
 # Control 89: an input on which the retention generation itself stops is compared by the verdict binary. The
-# binding traps on one 64-bit amount (in both builds); the campaign's own 10 executions do not reach it, the
-# retention generation (value profiling) does and stops there: the verdict binary must replay that input, so
+# binding traps on one pair of edge values (amount and fee rate both 10000, in both builds); the campaign's single
+# execution and the fixture corpus do not reach it, the retention generation does and stops there: the verdict binary must replay that input, so
 # the run FAILs with it kept, not PASS with only a classifier error.
 V89="$OUT/c89_fuzzdir"; rm -rf "$V89"; mkdir -p "$V89"; cp -r "$CPP"/. "$V89"/
-sed -i 's|  return Op{fvfuzz::pick_u64(in), fvfuzz::pick_u64(in)};|  Op o{fvfuzz::pick_u64(in), fvfuzz::pick_u64(in)}; if (o.amt == 0x5EED5EED5EEDull) __builtin_trap();  // c89\n  return o;|' "$V89/binding.hpp"
+sed -i 's|  return Op{fvfuzz::pick_u64(in), fvfuzz::pick_u64(in)};|  Op o{fvfuzz::pick_u64(in), fvfuzz::pick_u64(in)}; if (o.amt == 10000 \&\& o.bps == 10000) __builtin_trap();  // c89\n  return o;|' "$V89/binding.hpp"
 sed -i 's/^retain_runs = .*/retain_runs = 200000/' "$V89/fv.toml"
 grep -q '// c89' "$V89/binding.hpp" || echo "c89 setup: generator line not found" >&2
-CMAKE_DIR="$V89" campaign c89_retain_artifact --runs 10 --impl-dir "$ROOT/fixtures/conservation_cpp/impl"
+CMAKE_DIR="$V89" campaign c89_retain_artifact --runs 1 --impl-dir "$ROOT/fixtures/conservation_cpp/impl"
 rc=$?; j="$OUT/c89_retain_artifact/run/fuzz.json"
 ga=$(jq -r '.classes.retention.generation_artifacts // [] | join(" ")' "$j" 2>/dev/null)
 if [ $rc -eq 1 ] && jq -e '(.detail | contains("retention replay")) and ((.classes.retention.generation_artifacts // []) | length) >= 1' "$j" > /dev/null \
@@ -461,7 +461,7 @@ fi
 # (FV_RETAIN_GUARD_S=1, budget 200000): classes.error names it. (b) FV_NO_CLASSIFY=1: the record says that
 # neither classification nor retention ran.
 V90="$OUT/c90_fuzzdir"; rm -rf "$V90"; mkdir -p "$V90"; cp -r "$CPP"/. "$V90"/; sed -i 's/^retain_runs = .*/retain_runs = 200000/' "$V90/fv.toml"
-FV_RETAIN_GUARD_S=1 CMAKE_DIR="$V90" campaign c90a_retain_guard --runs 1000; ra=$?; ja="$OUT/c90a_retain_guard/run/fuzz.json"
+FV_RETAIN_GUARD_S=1 CMAKE_DIR="$V90" campaign c90a_retain_guard --runs 1000 --impl-dir "$ROOT/fixtures/conservation_cpp/impl"; ra=$?; ja="$OUT/c90a_retain_guard/run/fuzz.json"
 FV_NO_CLASSIFY=1 campaign c90b_no_classify --runs 1000; rb=$?; jb="$OUT/c90b_no_classify/run/fuzz.json"
 if [ $ra -eq 0 ] && jq -e '.verdict == "PASS" and (.classes.error // "" | contains("retention: the generation stopped after")) and .classes.retention.complete == false' "$ja" > /dev/null \
    && [ $rb -eq 0 ] && jq -e '.verdict == "PASS" and (.classes.skipped // "" | contains("FV_NO_CLASSIFY=1")) and .classes.retention.skipped == "FV_NO_CLASSIFY=1"' "$jb" > /dev/null; then
