@@ -13,6 +13,13 @@ fixture string) was renamed, and the README, this file and the release notes wer
 wording. c67 was re-run on this head, and run again with the guard and runner from before the
 restart window, where it must misbehave: `c67-rerun.txt` (OK, then misbehaved as required).
 
+A third later edit does change harness behaviour: `fuzz/sysroot/make_lock.py` (the tool a person runs to
+write the sysroot lock) now reads only the InRelease text gpgv verified and checks its suite, and has a
+`--check` mode. It is covered by the new control c88, run on this head and against the earlier
+`make_lock.py`, where it misbehaves (it pinned a package hash from an unsigned list placed before the signed
+block), and by `make_lock.py --check` of the committed lock against the archive (8 of 8 packages match):
+`c88-run.txt`. The committed lock and `install_sysroot.sh` are unchanged.
+
 Result: 82 controls, 0 misbehaved, 0 skipped. The rehearsal passed every step. Every language (cpp,
 rust, python, evm, tron-tvm) reached CLOSED, with the closure naming its language and implementation,
 and its drift implementation reached CPP_BUGFIX.

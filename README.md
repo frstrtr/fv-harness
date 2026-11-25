@@ -66,7 +66,7 @@ The pipeline:
     silence is the worker blocked.
   - Where the lease names the node's restart unit, a pause during the node's scheduled restart
     resumes after 2 minutes instead of 10.
-- **The control suite** adds c65–c75. The evidence of one full run is in
+- **The control suite** adds c65–c75 and c88 (the sysroot lock tool reads only what gpgv verified). The evidence of one full run is in
   `tests/harness_fv_controls/evidence/`.
 - **Upgrading from v0.3.0.**
   - Vendored copies may cite `v0.3.1`. The lines for earlier releases stay valid.
