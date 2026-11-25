@@ -1,49 +1,35 @@
-# Evidence: one full control run on the release head, and a re-run of one fixed control
+# Evidence: one full control run on the release head
 
 `summary.txt` holds the one-line verdict of each acceptance control, `rehearsal.log` the task
 state-machine rehearsal, and `lang_rehearsal.log` the state machine run end to end for every
 implementation language. They come from `tests/harness_fv_controls/run_controls.sh`,
-`tests/state_machine_rehearsal.sh` and `tests/lang_rehearsal.sh`, run once on the v0.3.1 release head
-before its last commit (61ab7a6), on one gate host (Ubuntu, 4 cores reserved), with
-`FV_REQUIRE_LANGS="rust python evm tron-tvm"`, so every language control ran and none could SKIP.
+`tests/state_machine_rehearsal.sh` and `tests/lang_rehearsal.sh`, run once on one gate host (Ubuntu,
+4 cores reserved), with `FV_REQUIRE_LANGS="rust python evm tron-tvm"`, so every language control ran and
+none could SKIP.
 
-Result: 82 controls, 81 behaving as specified, 1 misbehaved (c58), 0 skipped. The rehearsal passed every
-step. Every language (cpp, rust, python, evm, tron-tvm) reached CLOSED, with the closure naming its
-language and implementation, and its drift implementation reached CPP_BUGFIX.
+That run was on this release's code before two later edits, neither of which changes harness
+behaviour: the placeholder restart unit in `tests/harness_fv_controls/c67_restart_window.sh` (a
+fixture string) was renamed, and the README, this file and the release notes were corrected in
+wording. c67 was re-run on this head, and run again with the guard and runner from before the
+restart window, where it must misbehave: `c67-rerun.txt` (OK, then misbehaved as required).
 
-## c58: a control timing defect, fixed and re-run
-
-c58 (two ssh runs with the same name at once on one worker) misbehaved: "first exit=0, second exit=0,
-overlap=no". Both of its runs PASSed; what failed was the control's own assumption that the first run
-would still be running when the second ended. The first run had an execution budget (400,000 runs, a
-campaign of about 30 s) and the second spends minutes building before it starts; in this release the
-retention pass adds work after each campaign, which moved both end times, and the first run ended 3 s
-before the second. A control whose result depends on host speed is a control defect (as c27's time budget
-was in v0.2.1); the harness code was not involved.
-
-The last commit of the release (ac8d45e) changes only `tests/harness_fv_controls/multihost_controls.sh`:
-- the first run of c58 runs on time (`--time 600`; c58 is about overlap, not search), which outlasts
-  the second run's build and campaign at any host speed;
-- the overlap is observed, not assumed: a watcher records two `fv-run-*` work directories on the
-  worker at the same moment while the second run runs.
-
-No harness source, library or pin changed, so the full run above evidences the release's code. The
-multi-worker controls (c43–c47, c58, c60, c61, on the full run's c39 bundle) were then run twice on
-ac8d45e: `multihost-rerun-1.txt`, `multihost-rerun-2.txt`.
-
-Both re-runs: all 8 behave as specified (8 OK, 0 misbehaved); c58 observed the two runs' work
-directories on the worker at the same moment each time, and both of its runs PASSed.
+Result: 82 controls, 0 misbehaved, 0 skipped. The rehearsal passed every step. Every language (cpp,
+rust, python, evm, tron-tvm) reached CLOSED, with the closure naming its language and implementation,
+and its drift implementation reached CPP_BUGFIX.
 
 ## Controls added in v0.3.1
 
-Each was first run against the code without its feature, where it misbehaved:
+Each of c65–c74 was first run against the code without its feature, where it misbehaved. So were
+c75's checks that a stopped or raising classification is reported and that no transaction is sent
+during it; c75's isolation checks concern a path that did not exist before, so they have no such run.
 - **Worker gate:**
   - c65: a worker bundle is checked against the worker's glibc / GLIBCXX target before shipping;
   - c66: a chain node that does not answer pauses the campaign, and only 10 minutes of silence block it;
   - c67: the restart window shortens the resume after the node's scheduled restart.
 - **Edge-case classification and retention:**
   - c68–c71: a gap is reported in each language (Rust, Python, EVM, TRON-TVM);
-  - c72: predicate sources that differ from what ran are reported;
+  - c72: predicate sources that differ from what ran are reported, and a FAIL run's reproducers are
+    classified against the same sources with no error;
   - c73: retention keeps a class the coverage corpus lacked (C++ and Python);
   - c74: a finding that only the retention pass reaches FAILs, with the same reproducer and the same
     retained set in three runs;
