@@ -453,7 +453,8 @@ CMAKE_DIR="$V89" campaign c89_retain_artifact --runs 1 --impl-dir "$ROOT/fixture
 rc=$?; j="$OUT/c89_retain_artifact/run/fuzz.json"
 ga=$(jq -r '.classes.retention.generation_artifacts // [] | join(" ")' "$j" 2>/dev/null)
 if [ $rc -eq 1 ] && jq -e '(.detail | contains("retention replay")) and ((.classes.retention.generation_artifacts // []) | length) >= 1' "$j" > /dev/null \
-   && ls "$OUT/c89_retain_artifact/run/artifacts/" 2>/dev/null | grep -q '^retain-' && ! grep -q 'deadly signal' "$OUT/c89_retain_artifact/run/campaign.log"; then
+   && ls "$OUT/c89_retain_artifact/run/artifacts/" 2>/dev/null | grep -q '^retain-' && ! grep -q 'deadly signal' "$OUT/c89_retain_artifact/run/replay.log"; then
+  # (the detail "retention replay ..." is only reached once the corpus replay and the campaign passed)
   echo "c89_retain_artifact OK the generation stopped on [$ga]; the verdict binary replayed it: FAIL ($(jq -r '.detail | .[0:110]' "$j")), reproducer kept"
 else
   echo "c89_retain_artifact WRONG exit=$rc $(jq -c '{verdict, detail, ret: (.classes.retention | {error, generation_artifacts}), err: .classes.error}' "$j" 2>/dev/null | cut -c1-400)"; fails=1
