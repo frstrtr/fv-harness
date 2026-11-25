@@ -228,5 +228,9 @@ else
   report c31_hosts_env WRONG "file only: [$e1] (want 0-1 3); exported: [$e2] (want 0 3); unexported: [$e3] (want 0-1 3)"
 fi
 
+# Control 88: the sysroot lock tool reads only the text gpgv verified (fuzz/sysroot/make_lock.py).
+"$ROOT/tests/harness_fv_controls/c88_sysroot_lock.sh" "$OUT/c88" > "$OUT/c88.out" 2>&1; rc88=$?
+collect c88 "$OUT/c88.out" $rc88 c88_sysroot_lock
+
 note "$fails control(s) misbehaved, $skipped skipped (toolchain absent); summary $SUM"
 exit $((fails > 0))
