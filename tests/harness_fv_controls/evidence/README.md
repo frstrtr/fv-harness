@@ -7,8 +7,19 @@ implementation language. They come from `tests/harness_fv_controls/run_controls.
 4 cores reserved), with `FV_REQUIRE_LANGS="rust python evm tron-tvm"`, so every language control ran and
 none could SKIP.
 
-The run was on this release's code, at the commit before this file was written; the only later commit
-adds this directory's files and one README line.
+The full run was on 85f3b0d. The release then changed only `scripts/formal_task.py` (CLOSE keeps a task
+refused for reduced coverage in CLOSE, so `--reduced-coverage` can close it; a retention budget at or below
+its corpus counts as reduced coverage), one line of `fuzz/run_fuzz.sh` (a reused `--out`'s retained inputs
+are cleared when retention is off), control c108, and wording. On the release head's code (dd2ed1a) these
+ran again, on the same host:
+- `partial-summary.txt`: c1, c6, c7, c89, c112, c90, c113, c108 (rewritten: refused, then closed on the same
+  task through `close` and `run`; a budget of 10) and c65, all OK; `partial-classes-check.txt` lists their
+  records' classification (only c90 (a), (b) are refused, by design);
+- `partial-red.txt`: c108 on that head with `formal_task.py` as it was at 85f3b0d: it misbehaves (the
+  refusal moved the task to ERROR, so the flag could not close it; the budget of 10 closed unqualified);
+- `rehearsal.log` and `lang_rehearsal.log`: from 009f238, whose code differs from dd2ed1a only in c108's
+  fix in `run_fuzz_controls.sh`, which the rehearsals do not run.
+`summary.txt` and `classes-check.txt` are the full run's.
 
 `classes-check.txt` is `tests/harness_fv_controls/classes_check.sh` over every `fuzz.json` of the same run
 (the check the clean controls make themselves: a `classes` record with no `error`, not `skipped`, at least one
@@ -27,8 +38,9 @@ Each was first run against the code without its feature, where it misbehaved:
 - c89: an input on which the retention generation stops is replayed by the verdict binary; a finding there
   is FAIL with its reproducer kept;
 - c90: (a) a generation stopped by its time guard is in `classes.error`; (b) `FV_NO_CLASSIFY=1` is recorded;
-- c108: CLOSE reads the coverage from the record (no classification, the retention time guard, a test hook)
-  and the closure records `--reduced-coverage REASON`;
+- c108: CLOSE reads the coverage from the record (no classification, the retention time guard, a budget at or
+  below the corpus, a test hook); a refused task stays in CLOSE and `close` / `run` with
+  `--reduced-coverage REASON` close it, the closure recording the reason;
 - c109: the TRON-TVM driver checks run again after the retention replay and after the merge;
 - c112: the retention replay set with an `--out` holding a space, and with a reused `--out` (without the
   fix the first was a PASS that never replayed the generation's stop);
