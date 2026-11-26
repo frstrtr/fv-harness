@@ -11,7 +11,7 @@ OK    decompose-3: exit 0, state DISCHARGE
 OK    run-to-close: exit 0, state CLOSED
 OK    closure bundle present
 OK    closure records the Tier-2 escalation counters
-OK    closure names the closed tree (035fef7452d8), its content tree (348bf5ae5b0f, differs: Solution.lean written after the commit) and the harness commit (e22a97f)
+OK    closure names the closed tree (9c776b9e5e24), its content tree (348bf5ae5b0f, differs: Solution.lean written after the commit) and the harness commit (85f3b0dc7050bdb486351b998eccf424d3a31287)
 OK    harness record: clean deployment = clean; a changed file = DIRTY (fuzz/run_fuzz.sh); an added file = deployment data
 OK    git: the project's .lake is excluded (["p/.lake"]), a source build/ directory is not (content changes with it)
 OK    archive: the project's .lake is excluded (["p/.lake"]), a source build/ directory is not (content changes with it)

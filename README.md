@@ -63,6 +63,9 @@ The pipeline:
   - The TRON-TVM driver checks run again after the retention replay and after the merge (c109, through
     the test hook `FV_TEST_HOOK_REPLAY_STATUS`). Any `FV_TEST_HOOK_*` set, exported or only in
     `config/hosts.env`, is recorded (c113), and CLOSE refuses the run (c108).
+- **Fixed from v0.3.1:** a classification replay that stops left libFuzzer artifacts (`crash-*`, `slow-unit-*`)
+  in the caller's directory; they now go under the run. Control c114 checks that the suite leaves nothing
+  new in the harness root or the caller's directory.
 - **Every clean control checks its classification:** a PASS control also requires a complete
   classification record (`tests/harness_fv_controls/lib_classes.sh`; refused on a raising `classes.py`,
   c75 (b), (f)). `tests/harness_fv_controls/classes_check.sh OUTDIR` lists every run record's

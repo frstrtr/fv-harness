@@ -7,22 +7,36 @@ implementation language. They come from `tests/harness_fv_controls/run_controls.
 4 cores reserved), with `FV_REQUIRE_LANGS="rust python evm tron-tvm"`, so every language control ran and
 none could SKIP.
 
-That run was on this release's code before two later edits, neither of which changes harness
-behaviour: the placeholder restart unit in `tests/harness_fv_controls/c67_restart_window.sh` (a
-fixture string) was renamed, and the README, this file and the release notes were corrected in
-wording. c67 was re-run on this head, and run again with the guard and runner from before the
-restart window, where it must misbehave: `c67-rerun.txt` (OK, then misbehaved as required).
+The run was on this release's code, at the commit before this file was written; the only later commit
+adds this directory's files and one README line.
 
-A third later edit does change harness behaviour: `fuzz/sysroot/make_lock.py` (the tool a person runs to
-write the sysroot lock) now reads only the InRelease text gpgv verified and checks its suite, and has a
-`--check` mode. It is covered by the new control c88, run on this head and against the earlier
-`make_lock.py`, where it misbehaves (it pinned a package hash from an unsigned list placed before the signed
-block), and by `make_lock.py --check` of the committed lock against the archive (8 of 8 packages match):
-`c88-run.txt`. The committed lock and `install_sysroot.sh` are unchanged.
+`classes-check.txt` is `tests/harness_fv_controls/classes_check.sh` over every `fuzz.json` of the same run
+(the check the clean controls make themselves: a `classes` record with no `error`, not `skipped`, at least one
+class). Every PASS record passes it except the controls whose subject is a classification or retention error
+or a skipped classification: c72 (e), c75 (b), (e), (f), c90 (a), (b).
 
-Result: 82 controls, 0 misbehaved, 0 skipped. The rehearsal passed every step. Every language (cpp,
-rust, python, evm, tron-tvm) reached CLOSED, with the closure naming its language and implementation,
-and its drift implementation reached CPP_BUGFIX.
+Result: 91 controls, 0 misbehaved, 0 skipped; c114 found nothing new in the harness root or the caller's
+directory. The rehearsal passed every step. Every language (cpp, rust, python, evm, tron-tvm) reached CLOSED,
+with the closure naming its language and implementation, and its drift implementation reached CPP_BUGFIX.
+
+## Controls added in v0.3.2
+
+Each was first run against the code without its feature, where it misbehaved:
+- c65 (e), (f), (g): an `objdump` failure, a bundle without a `GLIBC_` symbol version, and a worker target
+  that is not a version are each ERROR before shipping;
+- c89: an input on which the retention generation stops is replayed by the verdict binary; a finding there
+  is FAIL with its reproducer kept;
+- c90: (a) a generation stopped by its time guard is in `classes.error`; (b) `FV_NO_CLASSIFY=1` is recorded;
+- c108: CLOSE reads the coverage from the record (no classification, the retention time guard, a test hook)
+  and the closure records `--reduced-coverage REASON`;
+- c109: the TRON-TVM driver checks run again after the retention replay and after the merge;
+- c112: the retention replay set with an `--out` holding a space, and with a reused `--out` (without the
+  fix the first was a PASS that never replayed the generation's stop);
+- c113: a test hook set in `config/hosts.env` without export is recorded;
+- c114: nothing is left in the harness root or the caller's directory (its red is this release's earlier
+  evidence runs, which left the classification replay's `crash-*` / `slow-unit-*` and the TRON-TVM
+  controls' `vm_trace/` and `logs/` there);
+- every clean PASS control requires a complete classification (`lib_classes.sh`); the red is c75 (b), (f).
 
 ## Controls added in v0.3.1
 

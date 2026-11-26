@@ -1,0 +1,136 @@
+# tests/harness_fv_controls/classes_check.sh over every fuzz.json of this run: OK|NO, verdict, path, reason
+OK	PASS	classify/c68_gap_rust/run/fuzz.json	classes: 18 classes
+OK	PASS	classify/c69_gap_py/run/fuzz.json	classes: 22 classes
+OK	PASS	classify/c70_gap_evm/run/fuzz.json	classes: 21 classes
+OK	PASS	classify/c71_gap_tron_tvm/run/fuzz.json	classes: 22 classes
+NO	PASS	classify/c72e_loop_classes/run/fuzz.json	classes: error classes file: classes.py line 28: fv_class needs a string name and a lambda; classes.py: ValueError:
+OK	FAIL	classify/c72f_rust_fail/run/fuzz.json	classes: 3 classes
+OK	PASS	classify/c73_cpp/run/fuzz.json	classes: 36 classes
+OK	PASS	classify/c73_py/run/fuzz.json	classes: 22 classes
+OK	FAIL	classify/c74_1/run/fuzz.json	classes: 3 classes
+OK	FAIL	classify/c74_2/run/fuzz.json	classes: 3 classes
+OK	FAIL	classify/c74_3/run/fuzz.json	classes: 3 classes
+OK	FAIL	classify/c75a_env/run/fuzz.json	classes: 3 classes
+NO	PASS	classify/c75b_raise/run/fuzz.json	classes: error classes.py: RuntimeError: c75: classes.py raises at import; the classification replay exited 3, so o
+NO	FAIL	classify/c75b_raise_drift/run/fuzz.json	classes: error classes.py: RuntimeError: c75: classes.py raises at import
+OK	PASS	classify/c75d_imports/run/fuzz.json	classes: 22 classes
+NO	PASS	classify/c75e_tron_tx/run/fuzz.json	classes: error the TRON-TVM client sent 1 transaction(s) during the oracle-only replay; the classification replay e
+NO	PASS	classify/c75f_describe_raises/run/fuzz.json	classes: error the classification replay exited 77, so only part of the corpus is classified: ZeroDivisionError: c7
+OK	PASS	fuzz/c108/hooked/fuzz.json	classes: 36 classes
+OK	FAIL	fuzz/c10_leak_class/run/fuzz.json	classes: 5 classes
+NO	FAIL	fuzz/c112 out/a run/fuzz.json	classes: error retention: the generation exited 77: ==1986197== ERROR: libFuzzer: deadly signal
+OK	PASS	fuzz/c112b/run/fuzz.json	classes: 36 classes
+OK	PASS	fuzz/c113/run/fuzz.json	classes: 36 classes
+OK	FAIL	fuzz/c11_hang/run/fuzz.json	classes: 5 classes
+OK	FAIL	fuzz/c12_growth/run/fuzz.json	classes: 5 classes
+OK	FAIL	fuzz/c13_classify_env/run/fuzz.json	classes: 5 classes
+NO	ERROR	fuzz/c14_zero_limits/malloc_limit_mb/run/fuzz.json	classes: no record
+NO	ERROR	fuzz/c14_zero_limits/rss_limit_mb/run/fuzz.json	classes: no record
+NO	ERROR	fuzz/c14_zero_limits/timeout/run/fuzz.json	classes: no record
+OK	PASS	fuzz/c1_fuzz/run/fuzz.json	classes: 36 classes
+OK	DRAFT PASS	fuzz/c30/draft/fuzz.json	classes: 36 classes
+NO	BLOCKED	fuzz/c30/signed-path/fuzz.json	classes: no record
+NO	ERROR	fuzz/c32/len_control/run/fuzz.json	classes: no record
+NO	ERROR	fuzz/c32/max_len/run/fuzz.json	classes: no record
+OK	PASS	fuzz/c32/set/run/fuzz.json	classes: 36 classes
+OK	PASS	fuzz/c38_jobs_clean/run/fuzz.json	classes: 36 classes
+OK	FAIL	fuzz/c38_jobs_one/run/fuzz.json	classes: 5 classes
+OK	PASS	fuzz/c39_remote_clean/run/fuzz.json	classes: 36 classes
+OK	FAIL	fuzz/c39_remote_one/run/fuzz.json	classes: 5 classes
+NO	BLOCKED	fuzz/c39_remote_remanifested/run/fuzz.json	classes: no record
+NO	ERROR	fuzz/c42/bad1/run/fuzz.json	classes: no record
+NO	ERROR	fuzz/c42/bad2/run/fuzz.json	classes: no record
+NO	ERROR	fuzz/c42/bad3/run/fuzz.json	classes: no record
+NO	ERROR	fuzz/c42/ok/fuzz.json	classes: no record
+OK	PASS	fuzz/c42/ok2/fuzz.json	classes: 36 classes
+NO	ERROR	fuzz/c48/fail/fuzz.json	classes: no record
+NO	ERROR	fuzz/c48/pass/fuzz.json	classes: no record
+NO	ERROR	fuzz/c48/sticky/fuzz.json	classes: no record
+OK	FAIL	fuzz/c53_merge_failure/run/fuzz.json	classes: 5 classes
+NO	ERROR	fuzz/c54_merge_inner_exit/run/fuzz.json	classes: no record
+NO	ERROR	fuzz/c59_merge_inner_start/run/fuzz.json	classes: no record
+OK	PASS	fuzz/c62_slow_units_jobs/run/fuzz.json	classes: 36 classes
+OK	PASS	fuzz/c63/run/fuzz.json	classes: 36 classes
+NO	BLOCKED	fuzz/c65/a/run/fuzz.json	classes: no record
+OK	PASS	fuzz/c65/b/run/fuzz.json	classes: 36 classes
+NO	ERROR	fuzz/c65/c/run/fuzz.json	classes: no record
+NO	ERROR	fuzz/c65/d/run/fuzz.json	classes: no record
+NO	ERROR	fuzz/c65/e/run/fuzz.json	classes: no record
+NO	ERROR	fuzz/c65/f/run/fuzz.json	classes: no record
+NO	ERROR	fuzz/c65/g/run/fuzz.json	classes: no record
+OK	FAIL	fuzz/c6_cpp_drift/run/fuzz.json	classes: 5 classes
+OK	FAIL	fuzz/c7_lsan_leak/run/fuzz.json	classes: 5 classes
+NO	FAIL	fuzz/c89_retain_artifact/run/fuzz.json	classes: error retention: the generation exited 77: ==1985495== ERROR: libFuzzer: deadly signal
+NO	FAIL	fuzz/c8_vendored_tamper/run/fuzz.json	classes: no record
+NO	PASS	fuzz/c90a_retain_guard/run/fuzz.json	classes: error retention: the generation stopped after 1403 of 200000 executions (time guard): not reproducible
+NO	PASS	fuzz/c90b_no_classify/run/fuzz.json	classes: skipped
+OK	PASS	fuzz/c9_edge_not_exercised/run/fuzz.json	classes: 36 classes
+NO	ERROR	fuzz/multihost/c43_killed/run/fuzz.json	classes: no record
+NO	BLOCKED	fuzz/multihost/c44_extra/run/fuzz.json	classes: no record
+NO	BLOCKED	fuzz/multihost/c44_outdir/run/fuzz.json	classes: no record
+NO	BLOCKED	fuzz/multihost/c44_outside/run/fuzz.json	classes: no record
+NO	BLOCKED	fuzz/multihost/c44_symlink/run/fuzz.json	classes: no record
+OK	PASS	fuzz/multihost/c45_pause/run/fuzz.json	classes: 36 classes
+OK	PASS	fuzz/multihost/c46_ssh/run/fuzz.json	classes: 36 classes
+NO	ERROR	fuzz/multihost/c47/bad name/fuzz.json	classes: no record
+NO	ERROR	fuzz/multihost/c47/bad$(id)/fuzz.json	classes: no record
+NO	ERROR	fuzz/multihost/c47/bad;rm/fuzz.json	classes: no record
+OK	PASS	fuzz/multihost/c58a/run/fuzz.json	classes: 36 classes
+OK	PASS	fuzz/multihost/c58b/run/fuzz.json	classes: 36 classes
+OK	PASS	lang/c109a_no_hook/run/fuzz.json	classes: 22 classes
+NO	ERROR	lang/c109b_retention/run/fuzz.json	classes: no record
+NO	ERROR	lang/c109c_merge/run/fuzz.json	classes: no record
+OK	PASS	lang/c109d_inert/run/fuzz.json	classes: 22 classes
+OK	PASS	lang/c15_rust_clean/run/fuzz.json	classes: 18 classes
+OK	FAIL	lang/c16_rust_drift/run/fuzz.json	classes: 3 classes
+OK	FAIL	lang/c17_rust_overflow/run/fuzz.json	classes: 3 classes
+NO	FAIL	lang/c18_rust_vendored_tamper/run/fuzz.json	classes: no record
+NO	ERROR	lang/c18b_rust_own_loop/run/fuzz.json	classes: no record
+NO	ERROR	lang/c19_Cargo_toml/run/fuzz.json	classes: no record
+NO	ERROR	lang/c19__cargo_config_toml/run/fuzz.json	classes: no record
+OK	PASS	lang/c21_py_clean/run/fuzz.json	classes: 22 classes
+OK	FAIL	lang/c22_py_drift/run/fuzz.json	classes: 3 classes
+OK	FAIL	lang/c23_py_wide/run/fuzz.json	classes: 3 classes
+NO	FAIL	lang/c24_py_vendored_tamper/run/fuzz.json	classes: no record
+NO	ERROR	lang/c24b_py_own_loop/run/fuzz.json	classes: no record
+OK	PASS	lang/c25_evm_clean/run/fuzz.json	classes: 5 classes
+NO	FAIL	lang/c26_evm_drift/run/fuzz.json	classes: skipped
+NO	FAIL	lang/c27_evm_overflow/run/fuzz.json	classes: skipped
+NO	FAIL	lang/c27b_evm_wrap/run/fuzz.json	classes: skipped
+NO	FAIL	lang/c28_evm_vendored_tamper/run/fuzz.json	classes: no record
+NO	ERROR	lang/c28b_evm_own_target/run/fuzz.json	classes: no record
+NO	ERROR	lang/c29_evm_solc/run/fuzz.json	classes: no record
+NO	BLOCKED	lang/c29b_evm_runtime/run/fuzz.json	classes: no record
+OK	PASS	lang/c34_tron_tvm_clean/run/fuzz.json	classes: 22 classes
+OK	FAIL	lang/c35_tron_tvm_drift/run/fuzz.json	classes: 4 classes
+NO	ERROR	lang/c36/f/run/fuzz.json	classes: no record
+NO	ERROR	lang/c36/g/run/fuzz.json	classes: no record
+NO	BLOCKED	lang/c36/h/run/fuzz.json	classes: no record
+NO	ERROR	lang/c36/i/run/fuzz.json	classes: no record
+NO	ERROR	lang/c36/j/run/fuzz.json	classes: no record
+NO	ERROR	lang/c36/k/run/fuzz.json	classes: no record
+NO	ERROR	lang/c36/l/run/fuzz.json	classes: no record
+NO	ERROR	lang/c36/m/run/fuzz.json	classes: no record
+NO	ERROR	lang/c36/n/run/fuzz.json	classes: no record
+NO	ERROR	lang/c36/o/run/fuzz.json	classes: no record
+NO	ERROR	lang/c36/p/run/fuzz.json	classes: no record
+NO	ERROR	lang/c36/prof/fuzz.json	classes: no record
+NO	ERROR	lang/c36/solcrun/fuzz.json	classes: no record
+NO	FAIL	lang/c37/run-a/fuzz.json	classes: no record
+NO	FAIL	lang/c37/run-b/fuzz.json	classes: no record
+OK	PASS	lang/c41_tron_tvm_coverage/run/fuzz.json	classes: 22 classes
+OK	FAIL	lang/c49_tron_tvm_itx_drop/run/fuzz.json	classes: 4 classes
+OK	PASS	lang/c51_tron_tvm_guidance/run/fuzz.json	classes: 22 classes
+OK	PASS	lang/c52_py_merge/run/fuzz.json	classes: 22 classes
+NO	ERROR	lang/c55_py_oracle_error_nofn/run/fuzz.json	classes: no record
+NO	ERROR	lang/c55_py_oracle_error_zero/run/fuzz.json	classes: no record
+NO	ERROR	lang/c57/a/run/fuzz.json	classes: no record
+NO	ERROR	lang/c57/b/run/fuzz.json	classes: no record
+NO	ERROR	lang/c57/c/run/fuzz.json	classes: no record
+NO	ERROR	lang/c57/d/run/fuzz.json	classes: no record
+NO	ERROR	lang/c57/e/run/fuzz.json	classes: no record
+NO	ERROR	lang/c57/f/run/fuzz.json	classes: no record
+NO	ERROR	lang/c64/a/run/fuzz.json	classes: no record
+NO	ERROR	lang/c64/b/run/fuzz.json	classes: no record
+OK	PASS	lang/c64/couple-c/fuzz.json	classes: 22 classes
+OK	PASS	lang/c64/couple-d/fuzz.json	classes: 22 classes

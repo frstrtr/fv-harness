@@ -1,4 +1,0 @@
-== c67 on this release's code (the worker bundle's guard and runner are this release's)
-c67_restart_window OK (a) restart-window, RESUME 6s after recovery; (b) non-window, RESUME 22s after recovery; (c) unreadable -> non-window, RESUME 21s; (d) restart-window pause, BLOCK after 14s
-== the same control with the guard and runner as they were before the restart window was added: it must misbehave
-c67_restart_window WRONG (a) WRONG branch=22 resume=; (b) WRONG branch=23 resume=; (c) WRONG branch=22 why=[] resume=; (d) WRONG exit=2 branch= after 14s [BLOCKED: chain node unreachable for 12 s (no answer since 11:28:01); batches sto]
