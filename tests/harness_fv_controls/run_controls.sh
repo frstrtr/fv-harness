@@ -18,6 +18,8 @@ VAR="$ROOT/tests/harness_fv_controls/variants"
 OUT="${1:-$FV_ROOT/runs/controls-$(date +%Y%m%dT%H%M%S)}"
 mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 SUM="$OUT/summary.txt"; : > "$SUM"
+# For c114: what the harness root and the caller's directory hold before any control runs.
+PRE_ROOT=$(ls -A "$ROOT" | LC_ALL=C sort); PRE_CWD=$(ls -A . | LC_ALL=C sort)
 fails=0
 
 skipped=0
@@ -231,6 +233,17 @@ fi
 # Control 88: the sysroot lock tool reads only the text gpgv verified (fuzz/sysroot/make_lock.py).
 "$ROOT/tests/harness_fv_controls/c88_sysroot_lock.sh" "$OUT/c88" > "$OUT/c88.out" 2>&1; rc88=$?
 collect c88 "$OUT/c88.out" $rc88 c88_sysroot_lock
+
+# Control 114: no control and no run left files in the harness root or in the caller's directory (a fuzzer without
+# an artifact prefix writes crash-*/slow-unit-* to its working directory; a TRON-TVM driver started outside its node
+# store writes vm_trace/ there).
+new_root=$(comm -13 <(printf '%s\n' "$PRE_ROOT") <(ls -A "$ROOT" | LC_ALL=C sort) | tr '\n' ' ')
+new_cwd=$(comm -13 <(printf '%s\n' "$PRE_CWD") <(ls -A . | LC_ALL=C sort) | tr '\n' ' ')
+if [ -z "${new_root// /}" ] && [ -z "${new_cwd// /}" ]; then
+  report c114_no_stray_files OK "nothing new in the harness root or the caller's directory after the suite"
+else
+  report c114_no_stray_files WRONG "new in the harness root: [${new_root% }]; in the caller's directory: [${new_cwd% }]"
+fi
 
 note "$fails control(s) misbehaved, $skipped skipped (toolchain absent); summary $SUM"
 exit $((fails > 0))

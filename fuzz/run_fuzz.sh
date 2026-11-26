@@ -589,7 +589,7 @@ classify() { # classify corpus|findings — labels only; sets CLASSES_JSON, neve
   if [ "$1" = corpus ]; then
     src=("$corpus"); [ "$merge" -eq 1 ] || src+=("$RUN/new_corpus")
     [ -d "$C/retained" ] && src+=("$C/retained")  # class-guided inputs, each compared by the verdict binary (4b)
-    FV_CLASSIFY="$C/log.jsonl" FV_CLASSIFY_TIME_IMPL=1 $CAP_CLS "$BIN_CLS" "${LIMITS[@]}" -runs=0 "${src[@]}" > "$C/replay.log" 2>&1
+    FV_CLASSIFY="$C/log.jsonl" FV_CLASSIFY_TIME_IMPL=1 $CAP_CLS "$BIN_CLS" "${LIMITS[@]}" -runs=0 -artifact_prefix="$C/replay-artifact-" "${src[@]}" > "$C/replay.log" 2>&1
     rrc=$?  # a replay that stopped (a describe() or predicate that raised or panicked) classified only part of the corpus
   else
     for f in "$RUN"/artifacts/*; do [ -f "$f" ] && fnd+=("$f"); done

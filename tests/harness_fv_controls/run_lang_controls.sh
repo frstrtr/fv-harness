@@ -369,7 +369,7 @@ tron_tvm_campaign() { # tron_tvm_campaign ID DIR IMPL ARGS...  (signed faucet sp
 tron_tvm_driver() { # tron_tvm_driver DIR [DRIVER_SRC] : compiles the driver into DIR/drv, writes DIR/driver.sh [PROFILE]
   local d="$1" src="${2:-$ROOT/fuzz/tron-tvm/FvTronTvmDriver.java}"; mkdir -p "$d/drv"
   "$TH/$FV_TRON_TVM_JDK/bin/javac" -nowarn -cp "$(cat "$TH/framework-test-classpath.txt")" -d "$d/drv" "$src" > "$d/javac.log" 2>&1
-  printf '#!/bin/sh\nexec %q -Xmx2g -cp %q FvTronTvmDriver "$1" "${FV_TEST_PROFILE:-%s}" 2>> %q\n' "$TH/$FV_TRON_TVM_JDK/bin/java" \
+  printf '#!/bin/sh\ncd "$1" || exit 2\nexec %q -Xmx2g -cp %q FvTronTvmDriver "$1" "${FV_TEST_PROFILE:-%s}" 2>> %q\n' "$TH/$FV_TRON_TVM_JDK/bin/java" \
     "$d/drv:$(cat "$TH/framework-test-classpath.txt")" "$ROOT/fuzz/tron-tvm/profiles/mainnet-20261122.json" "$d/driver.log" > "$d/driver.sh"
   chmod +x "$d/driver.sh"
 }
