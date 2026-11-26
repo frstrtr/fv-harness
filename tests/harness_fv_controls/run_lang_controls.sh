@@ -98,6 +98,7 @@
 # suite, run_controls.sh, requires every line).
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$ROOT/tests/harness_fv_controls/lib_classes.sh"   # classes_ok: a clean run's classification ran to the end
 . "$ROOT/scripts/lib.sh"
 OUT="$1"; mkdir -p "$OUT"
 LOCK="$ROOT/locks/risk-limit.sha256"; LEAN="$ROOT/examples/risk-limit/lean"
@@ -357,7 +358,6 @@ fi
 fi  # evm
 TH="${FV_TRON_TVM_HOME:-$FV_ROOT/tron-tvm}"; F="$ROOT/examples/token-faucet-tron-tvm"; TRON_TVM_ALL="c33_tron_tvm_trc10 c34_tron_tvm_clean c35_tron_tvm_drift c36_tron_tvm_refusals c37_tron_tvm_vendored_tamper c41_tron_tvm_coverage c49_tron_tvm_itx_drop c51_tron_tvm_guidance c56_tron_tvm_roundtrip c57_tron_tvm_build_pins c64_tron_tvm_record c109_tron_tvm_replay_drivers"
 fresh() { rm -rf "${1:?}"; mkdir -p "$1"; }  # fresh DIR: an empty directory (refuses an empty argument)
-. "$ROOT/tests/harness_fv_controls/lib_classes.sh"   # classes_ok: a clean run's classification ran to the end
 tron_tvm_campaign() { # tron_tvm_campaign ID DIR IMPL ARGS...  (signed faucet spec)
   local id="$1" dir="$2" impl="$3"; shift 3
   fresh "${OUT:?}/${id:?}"
