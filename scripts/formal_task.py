@@ -482,6 +482,10 @@ def cmd_close(a):
     if th:  # test hooks forge observations for controls, never for a countable campaign
         t.move(st, "ERROR", f"CLOSE refused: the campaign ran with test hooks {', '.join(th)}")
         return 3
+    gth = verdict.get("test_hooks") or []
+    if gth:  # the same for the gate: a hook edits trusted files to test the held-out copy
+        t.move(st, "ERROR", f"CLOSE refused: the gate ran with test hooks {', '.join(gth)}")
+        return 3
     go = (fz.get("remote") or {}).get("guard_overrides") or []
     if go:  # fake guard probes or thresholds are for controls, never for a countable campaign
         t.move(st, "ERROR", f"CLOSE refused: the campaign ran with guard overrides {', '.join(go)}")

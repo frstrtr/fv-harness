@@ -40,6 +40,22 @@ The pipeline:
   harness's first runs: on its own fixture, on the tools it builds on, and on its first production
   specification (`docs/CASE-STUDIES.md`).
 
+## Changes in v0.3.3
+
+- **The gate audits the locked files, never the working tree after the check.**
+  - Before v0.3.3, `verify_proof.sh` checked the trusted files against the signed lock, ran the lint, and
+    only then copied the trusted files from the project into its run directory, without hashing the copies.
+    A writer during that interval could change the spec the builds and comparator then used.
+  - Now the manifest is read once, into the run. Right after the check, the locked files are copied into a
+    content-addressed store (`$FV_ROOT/lock-store/<manifest sha256>`, or `FV_LOCK_STORE`), their files made
+    read-only, and verified against the manifest; a copy that differs is BLOCKED.
+  - Every staged tree (trusted, full, native) comes from that store, and is re-hashed against the lock just
+    before the builds and again at the start of the audit, else BLOCKED.
+  - New stages: `held_out` and `staged`. Two test hooks (`FV_TEST_HOOK_GATE_EDIT`,
+    `FV_TEST_HOOK_GATE_EDIT_STAGED`) simulate the writer for control c115; any hook set is recorded in
+    `verdict.json` (`test_hooks`), and CLOSE refuses the run.
+- **Upgrading from v0.3.2:** nothing to change. The first gate run of a lock creates its store entry.
+
 ## Changes in v0.3.2
 
 - **Offline by construction.** Every build (CMake and lake, cargo, clang, javac, solc) and every process

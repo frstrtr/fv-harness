@@ -34,4 +34,6 @@ print(json.dumps({
     "exports_sha256": exports,
     "provenance": prov.read_text().splitlines() if prov.is_file() else [],
     "run_dir": str(run_p),
+    # Test hooks (FV_TEST_HOOK_*) set during the run: controls only; CLOSE refuses a run with any.
+    "test_hooks": (run_p / "test_hooks.txt").read_text().split() if (run_p / "test_hooks.txt").is_file() else [],
 }, indent=2))

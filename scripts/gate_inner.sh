@@ -15,6 +15,14 @@ ifaces=$(tail -n +3 /proc/net/dev | cut -d: -f1 | tr -d ' ' | sort | tr '\n' ' '
 echo "interfaces: $ifaces" > "$RUN/stages/netns.log"
 if [ "$ifaces" = "lo " ]; then stage_set netns PASS; else stage_set netns ERROR; exit 0; fi
 
+# ---- the staged trees, once more, right before the first build ---------------------------------
+for t in trusted full native; do
+  if ! (cd "$RUN/$t" && sha256sum --check --quiet --strict "$RUN/lock.manifest") > /dev/null 2>&1; then
+    echo "BLOCKED: staged tree $t differs from the lock at the start of the audit" > "$RUN/stages/staged.log"
+    stage_set staged BLOCKED; exit 0
+  fi
+done
+
 # ---- provenance ------------------------------------------------------------------------------
 {
   echo "lean: $("$LEAN_TC/bin/lean" --version)"

@@ -101,6 +101,38 @@ else
   report c5b_tamper WRONG "exit=$rc lock=$(cat "$OUT/c5b_tamper/run/stages/lock.status" 2>/dev/null) other stages run: [$audited]"
 fi
 
+# Control 115: the gate audits the locked files, not whatever the working tree holds after the check. A test
+# hook appends a line to the trusted Challenge.lean right after the lock check (a writer racing the gate):
+# (a) with an empty held-out store: BLOCKED (the copy differs from the lock), nothing audited;
+# (b) with the store c1 already filled: the audit runs on the locked content (the hook's line is in the working
+#     tree, not in any staged tree); (c) a hook that edits the staged trusted tree after staging: BLOCKED before
+#     any build. Each run records its hook in verdict.json test_hooks.
+r115=""
+p=$(new_project c115a)
+FV_LOCK_STORE="$OUT/c115a/store" FV_TEST_HOOK_GATE_EDIT=spec/challenge/Challenge.lean \
+  "$ROOT/scripts/verify_proof.sh" --project "$p" --lock "$LOCK" --out "$OUT/c115a/run" > "$OUT/c115a/gate.out" 2>&1; ra=$?
+ja="$OUT/c115a/run/verdict.json"
+{ [ $ra -eq 2 ] && [ "$(cat "$OUT/c115a/run/stages/held_out.status" 2>/dev/null)" = BLOCKED ] && [ ! -e "$OUT/c115a/run/trusted" ] \
+  && jq -e '.test_hooks == ["FV_TEST_HOOK_GATE_EDIT"]' "$ja" > /dev/null && [ -z "$(ls -A "$OUT/c115a/store" 2>/dev/null)" ]; } \
+  || r115+="(a) exit=$ra held_out=$(cat "$OUT/c115a/run/stages/held_out.status" 2>/dev/null) trusted=$([ -e "$OUT/c115a/run/trusted" ] && echo staged || echo none); "
+p=$(new_project c115b); FV_TEST_HOOK_GATE_EDIT=spec/challenge/Challenge.lean \
+  "$ROOT/scripts/verify_proof.sh" --project "$p" --lock "$LOCK" --out "$OUT/c115b/run" > "$OUT/c115b/gate.out" 2>&1; rb=$?
+{ [ $rb -eq 0 ] && grep -q 'FV_TEST_HOOK_GATE_EDIT' "$p/spec/challenge/Challenge.lean" \
+  && ! grep -rq 'FV_TEST_HOOK_GATE_EDIT' "$OUT/c115b/run/trusted/spec" "$OUT/c115b/run/full/spec" "$OUT/c115b/run/native/spec" \
+  && [ "$(cat "$OUT/c115b/run/stages/staged.status" 2>/dev/null)" = PASS ]; } \
+  || r115+="(b) exit=$rb staged=$(cat "$OUT/c115b/run/stages/staged.status" 2>/dev/null) hook-line-in-staged=$(grep -rl 'FV_TEST_HOOK_GATE_EDIT' "$OUT/c115b/run/trusted/spec" 2>/dev/null | head -1); "
+p=$(new_project c115c); FV_TEST_HOOK_GATE_EDIT_STAGED=spec/challenge/Challenge.lean \
+  "$ROOT/scripts/verify_proof.sh" --project "$p" --lock "$LOCK" --out "$OUT/c115c/run" > "$OUT/c115c/gate.out" 2>&1; rc=$?
+built=$(cd "$OUT/c115c/run/stages" && ls ./*.status | grep -vE '/(lock|lint|held_out|staged)\.status' | tr '\n' ' ')
+{ [ $rc -eq 2 ] && [ "$(cat "$OUT/c115c/run/stages/staged.status" 2>/dev/null)" = BLOCKED ] && [ -z "$built" ] \
+  && jq -e '.test_hooks == ["FV_TEST_HOOK_GATE_EDIT_STAGED"]' "$OUT/c115c/run/verdict.json" > /dev/null; } \
+  || r115+="(c) exit=$rc staged=$(cat "$OUT/c115c/run/stages/staged.status" 2>/dev/null) later stages: [$built]; "
+if [ -z "$r115" ]; then
+  report c115_gate_held_out OK "(a) a trusted file edited after the check, empty store: BLOCKED, nothing staged; (b) the same with c1's store: audited the locked content (PASS), the edit only in the working tree; (c) the staged tree edited: BLOCKED before any build; hooks recorded"
+else
+  report c115_gate_held_out WRONG "$r115"
+fi
+
 # Controls 5c/5d: the agent edits the challenge AND rewrites the lock. Each run starts from a
 # private copy of the lock files (the agent can write the harness repo too: same OS user).
 tampered_lock() { # tampered_lock ID -> project path; LOCKDIR=$OUT/ID/locks holds a re-made manifest
