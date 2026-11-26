@@ -57,8 +57,16 @@ The pipeline:
   - `FV_NO_CLASSIFY=1` is recorded in `fuzz.json` (c90 (b)). CLOSE reads the coverage from the record: no
     classification, a classification error or an incomplete retention pass is refused unless given
     `--reduced-coverage REASON`, which the closure records right after the signer (c108).
+  - The retention replay set is built from the run's own files (an `--out` may hold spaces) and must hold
+    exactly the retained inputs and the generation's stops, else ERROR; a reused `--out`'s earlier stops
+    are cleared first (c112).
   - The TRON-TVM driver checks run again after the retention replay and after the merge (c109, through
-    the test hook `FV_TEST_HOOK_REPLAY_STATUS`; any `FV_TEST_HOOK_*` is recorded and CLOSE refuses the run).
+    the test hook `FV_TEST_HOOK_REPLAY_STATUS`). Any `FV_TEST_HOOK_*` set, exported or only in
+    `config/hosts.env`, is recorded (c113), and CLOSE refuses the run (c108).
+- **Every clean control checks its classification:** a PASS control also requires a complete
+  classification record (`tests/harness_fv_controls/lib_classes.sh`; refused on a raising `classes.py`,
+  c75 (b), (f)). `tests/harness_fv_controls/classes_check.sh OUTDIR` lists every run record's
+  classification. c73's C++ part runs without Python (hosted CI included).
 - **Worker gate:** an `objdump` failure, a bundle with no `GLIBC_` symbol version and a worker target that is
   not a version are each ERROR before shipping (c65 (e), (f), (g)).
 - **Faster suite:** the C++ fixture's retention budget is 2000 executions (`fixtures/conservation_cpp/fuzz/fv.toml`);
