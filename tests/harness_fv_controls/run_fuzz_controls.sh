@@ -470,18 +470,22 @@ fi
 
 # Control 112: the retention replay set is built from the run's own files whatever the path: (a) c89's trap with
 # an --out holding a space: the input the generation stopped on is still replayed, FAIL; (b) a reused --out: a
-# first run there stops on the trap; a second run there with the binding untrapped must neither list nor replay
-# the first run's stop: PASS, no generation artifact, every retained input replayed and nothing else.
+# first run there stops on the trap; a second run there (the same fuzz directory, the trap switched off by its
+# environment variable) must neither list nor replay the first run's stop: PASS, no generation artifact, every
+# retained input replayed and nothing else.
 r112=""; D112="$OUT/c112 out"; rm -rf "$D112"; mkdir -p "$D112"
 c112() { # c112 FUZZDIR RUNDIR CORPUS
   "$ROOT/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$1" --target diff_transfer --corpus "$3" \
     --no-merge --out "$2" --runs 1 --impl-dir "$ROOT/fixtures/conservation_cpp/impl" > "$2.out" 2>&1; }
-cp -r "$CPP/corpus" "$D112/corpus a"; c112 "$V89" "$D112/a run" "$D112/corpus a"; ra=$?; ja="$D112/a run/fuzz.json"
+V112="$OUT/c112_fuzzdir"; rm -rf "$V112"; mkdir -p "$V112"; cp -r "$V89"/. "$V112"/   # c89's trap, only while FV_C112_TRAP is set
+sed -i 's|if (o.amt == 10000 \&\& o.bps == 10000) __builtin_trap();  // c89|if (o.amt == 10000 \&\& o.bps == 10000 \&\& std::getenv("FV_C112_TRAP")) __builtin_trap();  // c112|' "$V112/binding.hpp"
+sed -i '1i #include <cstdlib>' "$V112/binding.hpp"
+grep -q '// c112' "$V112/binding.hpp" || echo "c112 setup: trap line not found" >&2
+cp -r "$CPP/corpus" "$D112/corpus a"; FV_C112_TRAP=1 c112 "$V112" "$D112/a run" "$D112/corpus a"; ra=$?; ja="$D112/a run/fuzz.json"
 [ $ra -eq 1 ] && jq -e '(.detail | contains("retention replay")) and (.classes.retention.generation_artifacts | length) >= 1' "$ja" > /dev/null \
   || r112+="(a) exit=$ra [$(jq -r .detail "$ja" 2>/dev/null | cut -c1-100)] ga=$(jq -c .classes.retention.generation_artifacts "$ja" 2>/dev/null); "
-V112="$OUT/c112_fuzzdir"; rm -rf "$V112"; mkdir -p "$V112"; cp -r "$CPP"/. "$V112"/; sed -i 's/^retain_runs = .*/retain_runs = 200000/' "$V112/fv.toml"
 B112="$OUT/c112b"; rm -rf "$B112"; mkdir -p "$B112"; cp -r "$CPP/corpus" "$B112/corpus1"; cp -r "$CPP/corpus" "$B112/corpus2"
-c112 "$V89" "$B112/run" "$B112/corpus1"; rb1=$?
+FV_C112_TRAP=1 c112 "$V112" "$B112/run" "$B112/corpus1"; rb1=$?
 c112 "$V112" "$B112/run" "$B112/corpus2"; rb2=$?; jb="$B112/run/fuzz.json"
 [ $rb1 -eq 1 ] && [ $rb2 -eq 0 ] && jq -e '.verdict == "PASS" and (.classes.retention.generation_artifacts | length) == 0
      and .classes.retention.replayed == (.classes.retention.retained | length)' "$jb" > /dev/null \
@@ -541,9 +545,9 @@ r108=(); for k in plain:c90b_no_classify/run: reduced:c90b_no_classify/run:x gua
 done
 cp -r "$FV_ROOT/tasks/$T108" "$D108/" 2>/dev/null; rm -rf "${FV_ROOT:?}/tasks/${T108:?}"
 cj="$D108/c108-reduced-$$/closure.json"; cm="$D108/c108-reduced-$$/closure.md"
-if [ "${r108[0]}" = "3:ERROR:none" ] && grep -q 'CLOSE refused: reduced coverage (classification skipped: FV_NO_CLASSIFY=1' "$D108/c108-plain-$$/history.jsonl" \
-   && [ "${r108[2]}" = "3:ERROR:none" ] && grep -q 'CLOSE refused: reduced coverage (class-guided retention incomplete: the generation stopped' "$D108/c108-guard-$$/history.jsonl" \
-   && [ "${r108[3]}" = "3:ERROR:none" ] && grep -q 'CLOSE refused: the campaign ran with test hooks FV_TEST_HOOK_REPLAY_STATUS' "$D108/c108-hook-$$/history.jsonl" \
+if [ "${r108[0]}" = "3:ERROR:none" ] && grep -q 'CLOSE refused: reduced coverage (classification skipped: FV_NO_CLASSIFY=1' "$D108/c108-plain-$$/state.json" \
+   && [ "${r108[2]}" = "3:ERROR:none" ] && grep -q 'CLOSE refused: reduced coverage (.*class-guided retention incomplete: the generation stopped' "$D108/c108-guard-$$/state.json" \
+   && [ "${r108[3]}" = "3:ERROR:none" ] && grep -q 'CLOSE refused: the campaign ran with test hooks FV_TEST_HOOK_REPLAY_STATUS' "$D108/c108-hook-$$/state.json" \
    && [ "${r108[1]%%:*}" = 0 ] && [ "$(jq -r 'keys_unsorted[1]' "$cj" 2>/dev/null)" = reduced_coverage ] \
    && jq -e '.reduced_coverage.reason == "c108: a control" and (.reduced_coverage.fuzz_record | startswith("classification skipped: FV_NO_CLASSIFY=1"))' "$cj" > /dev/null \
    && sed -n 3p "$cm" | grep -q '^REDUCED COVERAGE: c108: a control' \
