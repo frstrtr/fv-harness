@@ -476,16 +476,33 @@ def cmd_close(a):
     if go:  # fake guard probes or thresholds are for controls, never for a countable campaign
         t.move(st, "ERROR", f"CLOSE refused: the campaign ran with guard overrides {', '.join(go)}")
         return 3
-    # FV_NO_CLASSIFY=1: no classification and no class-guided retention ran, so the campaign compared fewer
-    # inputs than a full one. Never an unqualified CLOSE: only with --reduced-coverage REASON, which the
-    # closure records first, next to the signer.
+    # Reduced coverage, read from the record: no classification (FV_NO_CLASSIFY=1, a classification error) or
+    # an incomplete class-guided retention pass (retain_runs = 0, its time guard, a stopped generation, a
+    # classify build without retention) means the campaign compared fewer inputs than a full one. Never an
+    # unqualified CLOSE: only with --reduced-coverage REASON, which the closure records first, next to the signer.
+    ec = fz.get("classes") or {}
+    rt = ec.get("retention") or {}
+    gaps = []
+    if not ec:
+        gaps.append("no classification record")
+    else:
+        if ec.get("skipped"):
+            gaps.append(f"classification skipped: {ec['skipped']}")
+        if ec.get("error"):
+            gaps.append(f"classification error: {str(ec['error'])[:200]}")
+        if not rt:
+            gaps.append("no class-guided retention record")
+        elif rt.get("skipped"):
+            gaps.append(f"class-guided retention skipped: {rt['skipped']}")
+        elif rt.get("complete") is not True or not rt.get("runs"):
+            gaps.append(f"class-guided retention incomplete: {str(rt.get('error') or 'complete=' + str(rt.get('complete')))[:200]}")
     reduced = None
-    if "FV_NO_CLASSIFY=1" in str((fz.get("classes") or {}).get("skipped") or ""):
+    if gaps:
         if not getattr(a, "reduced_coverage", None):
-            t.move(st, "ERROR", "CLOSE refused: the campaign ran with FV_NO_CLASSIFY=1 (no classification, no class-guided "
-                                "retention); close it only with --reduced-coverage REASON, which the closure records")
+            t.move(st, "ERROR", f"CLOSE refused: reduced coverage ({'; '.join(gaps)}); close it only with "
+                                "--reduced-coverage REASON, which the closure records")
             return 3
-        reduced = {"reason": a.reduced_coverage, "fuzz_record": (fz.get("classes") or {}).get("skipped")}
+        reduced = {"reason": a.reduced_coverage, "fuzz_record": "; ".join(gaps)}
     if fz.get("lang") == "tron-tvm":  # the reference must be named and must have run
         tt = fz.get("tron_tvm") or {}
         miss = [k for k, ok in (("java_tron_commit", tt.get("java_tron_commit")),
@@ -575,7 +592,9 @@ def cmd_close(a):
     ec = fz.get("classes") or {}
     md += ["", "## Edge-case coverage (labels only; never part of the verdict)"]
     if not ec:
-        md += ["- not classified (the binding has no describe() and no classes.hpp, or FV_NO_CLASSIFY=1)"]
+        md += ["- not classified (no classification record)"]
+    elif ec.get("skipped"):
+        md += [f"- not classified: {ec['skipped']}"]
     elif ec.get("error"):
         md += [f"- {ec['error']}"]
     else:

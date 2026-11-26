@@ -200,7 +200,8 @@ RETAIN_JSON=null
 #   FV_TEST_HOOK_REPLAY_STATUS=retention|merge  (--lang tron-tvm) after that replay, append one forged "ready"
 #     observation (a driver that saw an interface other than lo), as a driver started in that replay would write
 #     it; the driver checks that follow that replay must then refuse the run.
-TEST_HOOKS_JSON=$(env | sed -n 's/^\(FV_TEST_HOOK_[A-Z0-9_]*\)=.*/\1/p' | LC_ALL=C sort | jq -Rsc 'split("\n") | map(select(. != ""))')
+# Shell variables, not only the environment: one set in config/hosts.env without export acts all the same.
+TEST_HOOKS_JSON=$(compgen -v | grep -E '^FV_TEST_HOOK_[A-Z0-9_]*$' | LC_ALL=C sort | jq -Rsc 'split("\n") | map(select(. != ""))')
 test_hook_replay_status() { # test_hook_replay_status PHASE
   [ "$lang" = tron-tvm ] && [ -n "${FV_TEST_HOOK_REPLAY_STATUS:-}" ] && [ "$FV_TEST_HOOK_REPLAY_STATUS" = "$1" ] || return 0
   jq -nc --arg c "$(jq -r -s '[.[] | select(.event == "ready") | .config][0] // ""' "$RUN/tron-tvm/status.jsonl" 2>/dev/null)" \
@@ -943,6 +944,7 @@ retention() {
   local C="$RUN/classify" K="$RUN/classify/retained" W="$RUN/classify/retain-work" src=("$corpus") rc rr n done_ ok=true
   [ "$RETAIN_RUNS" -gt 0 ] || { RETAIN_JSON='{"runs": 0, "skipped": "retain_runs = 0"}'; return 0; }
   mkdir -p "$C"; rm -rf "$K" "$W"; mkdir -p "$K" "$W"
+  find "$C" -maxdepth 1 -type f -name 'retain-artifact-*' -delete   # a reused --out: only this generation's stops count
   [ -d "$RUN/new_corpus" ] && src+=("$RUN/new_corpus")
   # The first directory receives libFuzzer's own new units (W, discarded); -reload=0: no timed re-reads.
   FV_CLASSIFY=/dev/null FV_CLASSIFY_RETAIN="$K" $CAP_CLS "$BIN_CLS" "${LIMITS[@]}" "${LENS[@]}" -seed="$RETAIN_SEED" \
@@ -963,16 +965,22 @@ retention() {
   # An input on which the generation itself stopped (libFuzzer's crash-, timeout-, oom- or leak- artifact) was
   # never compared: the verdict binary replays it with the retained inputs. If the verdict binary fails on it,
   # that is a finding; if not, the stop was the classifier's own (a describe() or predicate that raised).
-  local A="$C/retain-replay-set" arts
+  local A="$C/retain-replay-set" arts nk na f
   rm -rf "$A"; mkdir -p "$A"
   arts=$(find "$C" -maxdepth 1 -type f -name 'retain-artifact-*' ! -name '*slow-unit-*' -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')
-  for f in "$K"/* $(for a in $arts; do echo "$C/$a"; done); do [ -f "$f" ] && cp "$f" "$A/"; done
+  nk=0; na=0
+  while IFS= read -r -d '' f; do cp -- "$f" "$A/"; nk=$((nk + 1)); done < <(find "$K" -maxdepth 1 -type f -print0)
+  while IFS= read -r -d '' f; do cp -- "$f" "$A/"; na=$((na + 1)); done \
+    < <(find "$C" -maxdepth 1 -type f -name 'retain-artifact-*' ! -name '*slow-unit-*' -print0)
   RETAIN_JSON=$(jq -nc --argjson runs "$RETAIN_RUNS" --argjson seed "$RETAIN_SEED" --argjson done "${done_:-0}" --argjson err "$err" \
     --argjson complete "$ok" --arg hashes "$(find "$K" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')" --arg arts "$arts" \
     '{runs: $runs, seed: $seed, executions: $done, complete: $complete, error: $err, value_profile: true,
       retained: ($hashes | split(" ") | map(select(. != ""))), generation_artifacts: ($arts | split(" ") | map(select(. != ""))),
       replayed: null}')
   n=$(find "$A" -maxdepth 1 -type f | wc -l)
+  # The set replayed must be exactly the retained inputs and the generation's stops: anything else (a name
+  # collision, a copy that failed) would leave an input uncompared.
+  [ "$n" -eq $((nk + na)) ] || verdict 3 ERROR "the retention replay set holds $n inputs, not the $nk retained and $na the generation stopped on"
   [ "$n" -gt 0 ] || return 0
   # The verdict binary compares every retained input, and every input the generation stopped on.
   $CAP_BIN "$BIN" "${LIMITS[@]}" -runs=0 -artifact_prefix="$RUN/artifacts/retain-" "$A" > "$RUN/retain-replay.log" 2>&1
