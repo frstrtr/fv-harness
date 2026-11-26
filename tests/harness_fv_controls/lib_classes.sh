@@ -10,7 +10,3 @@ classes_why() { # classes_why FUZZ_JSON: one line for a WRONG message
   jq -r '"classes: " + (if (.classes | type) != "object" then "no record" elif .classes.error then "error " + (.classes.error | .[0:100])
          elif .classes.skipped then "skipped" else "\(.classes.classes | length) classes" end)' "$1" 2>/dev/null || echo "classes: no fuzz.json"
 }
-classes_skipped_by_design() { # classes_skipped_by_design FUZZ_JSON LANG: a language without classification says so
-  jq -e --arg l "$2" '(.classes | type == "object") and .classes.error == null
-         and (.classes.skipped // "" | contains("is not available for --lang " + $l))' "$1" > /dev/null 2>&1
-}

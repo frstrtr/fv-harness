@@ -53,10 +53,11 @@ The pipeline:
   - The verdict binary also replays any input on which the retention generation itself stopped (a crash,
     timeout or OOM artifact): a finding there is a FAIL (c89).
   - A retention pass that did not complete is written to `classes.error`, so the classification is never
-    shown as complete: a generation that stopped (c89) and one stopped by its time guard (c90 (a)).
+    shown as complete: a generation that stopped (c75 (f)) and one stopped by its time guard (c90 (a)).
   - `FV_NO_CLASSIFY=1` is recorded in `fuzz.json` (c90 (b)). CLOSE reads the coverage from the record: no
-    classification, a classification error or an incomplete retention pass is refused unless given
-    `--reduced-coverage REASON`, which the closure records right after the signer (c108).
+    classification, a classification error, or a retention pass that was skipped, incomplete or generated
+    nothing is refused; the task stays in CLOSE, and `close` or `run` with `--reduced-coverage REASON`
+    closes it, the closure recording the reason right after the signer (c108).
   - The retention replay set is built from the run's own files (an `--out` may hold spaces) and must hold
     exactly the retained inputs and the generation's stops, else ERROR; a reused `--out`'s earlier stops
     are cleared first (c112).
@@ -76,8 +77,9 @@ The pipeline:
   the controls whose subject is retention set 200000. The control suite's C++ part takes about 27 minutes
   on a 4-core host instead of 2.5 hours.
 - **Upgrading from v0.3.1:** vendored files are unchanged. A campaign without a complete classification and
-  retention pass (`FV_NO_CLASSIFY=1`, `retain_runs = 0`, the retention time guard, a classification error)
-  closes only with `formal_task.py close --reduced-coverage REASON`. Rust and EVM: builds are offline, so the
+  retention pass (`FV_NO_CLASSIFY=1`, `retain_runs = 0` or a budget at or below the corpus, the retention
+  time guard, a classification error) stops in CLOSE (exit 11) and closes only with
+  `formal_task.py close|run TASK --reduced-coverage REASON`. Rust and EVM: builds are offline, so the
   crates must already be in cargo's cache: `cargo fetch --locked` in the fuzz directory (with the network)
   before the first run.
 

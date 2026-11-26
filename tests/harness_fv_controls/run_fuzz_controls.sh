@@ -87,11 +87,12 @@
 #   c90_retention_recorded  (a) a generation stopped by its time guard is in classes.error; (b) FV_NO_CLASSIFY=1
 #                 is recorded (no classification, no retention), never silent.
 #   c113_hook_hosts_env  a test hook set in config/hosts.env without export is recorded in fuzz.json test_hooks.
-#   c108_no_classify_close  CLOSE reads coverage from the record: the FV_NO_CLASSIFY=1 campaign (c90 (b)) and the
-#                 one whose retention hit its time guard (c90 (a)) are refused; with --reduced-coverage REASON
-#                 the first closes, the reason recorded right after the signer in closure.json and at the head
-#                 of closure.md, whose coverage section says "not classified"; a record with a test hook is
-#                 refused even with the flag.
+#   c108_no_classify_close  CLOSE reads coverage from the record, and a refusal for reduced coverage keeps the task
+#                 in CLOSE (exit 11): (a) the FV_NO_CLASSIFY=1 campaign (c90 (b)) is refused, then closed with
+#                 --reduced-coverage REASON on the same task (the reason right after the signer in closure.json,
+#                 at the head of closure.md, whose coverage section says "not classified"); (b) the same through
+#                 run; (c) the retention time guard (c90 (a)) and (d) a retention budget at or below its corpus
+#                 (retain_runs = 10) are refused; (e) a record with a test hook is ERROR even with the flag.
 #   c59_merge_inner_start  the inner merge process exits at start, before any input (no input to blame;
 #                 libFuzzer exits 0 having merged nothing): ERROR "did not complete in one attempt".
 #   c30_draft_not_countable  a draft (an UNSIGNED spec_lock.sh manifest) can be validated with
@@ -525,37 +526,50 @@ else
   echo "c113_hook_hosts_env WRONG exit=$rc $(jq -c '{verdict, detail, test_hooks}' "$j" 2>/dev/null | cut -c1-200)"; fails=1
 fi
 
-# Control 108: CLOSE reads the coverage from the record. A campaign with no classification (FV_NO_CLASSIFY=1, c90 (b))
-# or an incomplete retention pass (its time guard, c90 (a)) never closes as a full pass: CLOSE is refused, and
-# with --reduced-coverage REASON it closes with that reason recorded first in closure.json and closure.md,
-# whose coverage section says "not classified". A record with a test hook is refused even with the flag.
+# Control 108: CLOSE reads the coverage from the record, and a refusal for reduced coverage leaves the task in CLOSE,
+# so a person's --reduced-coverage REASON can close the same task. (a) The FV_NO_CLASSIFY=1 campaign (c90 (b)):
+# close refused (exit 11, still CLOSE, no closure), then close --reduced-coverage on the same task: CLOSED, the reason
+# right after the signer in closure.json and at the head of closure.md, whose coverage section says "not classified";
+# (b) the same through `run`: refused, then `run --reduced-coverage`: CLOSED; (c) the retention time guard (c90 (a)):
+# refused; (d) a retention budget at or below the corpus it starts from (retain_runs = 10): refused as having
+# generated nothing; (e) a record with a test hook: ERROR even with --reduced-coverage.
 D108="$OUT/c108"; rm -rf "$D108"; mkdir -p "$D108/audit"; cp -r "$FIX" "$D108/proj"; rm -rf "$D108/proj/.lake"
 echo '{"verdict": "PASS", "stages": {}}' > "$D108/audit/verdict.json"
 mkdir -p "$D108/hooked"   # c1's clean record with a test hook added
 jq '.test_hooks = ["FV_TEST_HOOK_REPLAY_STATUS"]' "$OUT/c1_fuzz/run/fuzz.json" > "$D108/hooked/fuzz.json" 2>/dev/null
+V108="$OUT/c108_fuzzdir"; rm -rf "$V108"; mkdir -p "$V108"; cp -r "$CPP"/. "$V108"/; sed -i 's/^retain_runs = .*/retain_runs = 10/' "$V108/fv.toml"
+CMAKE_DIR="$V108" campaign c108_small --runs 200; rcs=$?
 FT=(python3 -I "$ROOT/scripts/formal_task.py"); T108="c108-init-$$"
 "${FT[@]}" init "$T108" --project "$D108/proj" --lock "$LOCK" --cmake-dir "$CPP" --target diff_transfer --fuzz-runs 1000 > "$D108/task.out" 2>&1
-r108=(); for k in plain:c90b_no_classify/run: reduced:c90b_no_classify/run:x guard:c90a_retain_guard/run: hook:c108/hooked:x; do
-  IFS=: read -r name run flag <<< "$k"; tk="c108-$name-$$"; mkdir -p "$FV_ROOT/tasks/$tk"
-  jq --arg a "$D108/audit" --arg c "$OUT/$run" --arg t "$tk" '.task = $t | .state = "CLOSE" | .last_audit = $a | .last_couple = $c' \
-    "$FV_ROOT/tasks/$T108/state.json" > "$FV_ROOT/tasks/$tk/state.json"
-  if [ -z "$flag" ]; then "${FT[@]}" close "$tk" >> "$D108/task.out" 2>&1; else "${FT[@]}" close "$tk" --reduced-coverage "c108: a control" >> "$D108/task.out" 2>&1; fi
-  r108+=("$?:$(jq -r .state "$FV_ROOT/tasks/$tk/state.json" 2>/dev/null):$([ -e "$FV_ROOT/tasks/$tk/closure.json" ] && echo closure || echo none)")
-  cp -r "$FV_ROOT/tasks/$tk" "$D108/"; rm -rf "${FV_ROOT:?}/tasks/${tk:?}"
-done
-cp -r "$FV_ROOT/tasks/$T108" "$D108/" 2>/dev/null; rm -rf "${FV_ROOT:?}/tasks/${T108:?}"
-cj="$D108/c108-reduced-$$/closure.json"; cm="$D108/c108-reduced-$$/closure.md"
-if [ "${r108[0]}" = "3:ERROR:none" ] && grep -q 'CLOSE refused: reduced coverage (classification skipped: FV_NO_CLASSIFY=1' "$D108/c108-plain-$$/state.json" \
-   && [ "${r108[2]}" = "3:ERROR:none" ] && grep -q 'CLOSE refused: reduced coverage (.*class-guided retention incomplete: the generation stopped' "$D108/c108-guard-$$/state.json" \
-   && [ "${r108[3]}" = "3:ERROR:none" ] && grep -q 'CLOSE refused: the campaign ran with test hooks FV_TEST_HOOK_REPLAY_STATUS' "$D108/c108-hook-$$/state.json" \
-   && [ "${r108[1]%%:*}" = 0 ] && [ "$(jq -r 'keys_unsorted[1]' "$cj" 2>/dev/null)" = reduced_coverage ] \
+mk108() { # mk108 NAME RUN_DIR: a task in CLOSE whose campaign record is RUN_DIR's
+  local tk="c108-$1-$$"; mkdir -p "$FV_ROOT/tasks/$tk"
+  jq --arg a "$D108/audit" --arg c "$2" --arg t "$tk" '.task = $t | .state = "CLOSE" | .last_audit = $a | .last_couple = $c' \
+    "$FV_ROOT/tasks/$T108/state.json" > "$FV_ROOT/tasks/$tk/state.json"; echo "$tk"; }
+st108() { echo "$1:$(jq -r .state "$FV_ROOT/tasks/$2/state.json" 2>/dev/null):$([ -e "$FV_ROOT/tasks/$2/closure.json" ] && echo closure || echo none)"; }
+ta=$(mk108 a "$OUT/c90b_no_classify/run"); "${FT[@]}" close "$ta" >> "$D108/task.out" 2>&1; ra1=$(st108 $? "$ta")
+"${FT[@]}" close "$ta" --reduced-coverage "c108: a control" >> "$D108/task.out" 2>&1; ra2=$(st108 $? "$ta")
+tb=$(mk108 b "$OUT/c90b_no_classify/run"); "${FT[@]}" run "$tb" >> "$D108/task.out" 2>&1; rb1=$(st108 $? "$tb")
+"${FT[@]}" run "$tb" --reduced-coverage "c108: through run" >> "$D108/task.out" 2>&1; rb2=$(st108 $? "$tb")
+tc=$(mk108 c "$OUT/c90a_retain_guard/run"); "${FT[@]}" close "$tc" >> "$D108/task.out" 2>&1; rc1=$(st108 $? "$tc")
+td=$(mk108 d "$OUT/c108_small/run"); "${FT[@]}" close "$td" >> "$D108/task.out" 2>&1; rd1=$(st108 $? "$td")
+te=$(mk108 e "$D108/hooked"); "${FT[@]}" close "$te" --reduced-coverage "c108" >> "$D108/task.out" 2>&1; re1=$(st108 $? "$te")
+for tk in "$ta" "$tb" "$tc" "$td" "$te" "$T108"; do cp -r "$FV_ROOT/tasks/$tk" "$D108/" 2>/dev/null; rm -rf "${FV_ROOT:?}/tasks/${tk:?}"; done
+cj="$D108/$ta/closure.json"; cm="$D108/$ta/closure.md"
+refused() { jq -e --arg w "$2" '[.history[] | select(.event == "close refused" and (.note | contains($w)))] | length >= 1' "$D108/$1/state.json" > /dev/null; }
+if [ "$ra1" = "11:CLOSE:none" ] && refused "$ta" "classification skipped: FV_NO_CLASSIFY=1" && [ "$ra2" = "0:CLOSED:closure" ] \
+   && [ "$(jq -r 'keys_unsorted[1]' "$cj" 2>/dev/null)" = reduced_coverage ] \
    && jq -e '.reduced_coverage.reason == "c108: a control" and (.reduced_coverage.fuzz_record | startswith("classification skipped: FV_NO_CLASSIFY=1"))' "$cj" > /dev/null \
    && sed -n 3p "$cm" | grep -q '^REDUCED COVERAGE: c108: a control' \
    && sed -n '/^## Edge-case coverage/,/^## /p' "$cm" | grep -q '^- not classified: FV_NO_CLASSIFY=1' \
-   && ! sed -n '/^## Edge-case coverage/,/^## /p' "$cm" | grep -q 'distinct corpus inputs'; then
-  echo "c108_no_classify_close OK CLOSE refused (ERROR, no closure) on the record: no classification, the retention time guard, a test hook (even with --reduced-coverage); with --reduced-coverage: closed, reason recorded second in closure.json (after the signer) and at the head of closure.md, whose coverage section says \"not classified\""
+   && ! sed -n '/^## Edge-case coverage/,/^## /p' "$cm" | grep -q 'distinct corpus inputs' \
+   && [ "$rb1" = "11:CLOSE:none" ] && [ "$rb2" = "0:CLOSED:closure" ] \
+   && jq -e '.reduced_coverage.reason == "c108: through run"' "$D108/$tb/closure.json" > /dev/null \
+   && [ "$rc1" = "11:CLOSE:none" ] && refused "$tc" "class-guided retention incomplete: the generation stopped" \
+   && [ $rcs -eq 0 ] && [ "$rd1" = "11:CLOSE:none" ] && refused "$td" "class-guided retention generated nothing: a budget of 10 executions" \
+   && [ "$re1" = "3:ERROR:none" ] && grep -q 'CLOSE refused: the campaign ran with test hooks FV_TEST_HOOK_REPLAY_STATUS' "$D108/$te/state.json"; then
+  echo "c108_no_classify_close OK reduced coverage read from the record: (a) close refused, the task stays in CLOSE (exit 11), then close --reduced-coverage closes it (reason right after the signer in closure.json, at the head of closure.md, coverage \"not classified\"); (b) the same through run; refused too: (c) the retention time guard, (d) a retention budget of 10 (generated nothing); (e) a test hook: ERROR even with the flag"
 else
-  echo "c108_no_classify_close WRONG plain=${r108[0]} reduced=${r108[1]} guard=${r108[2]} hook=${r108[3]} keys=$(jq -c 'keys_unsorted[0:3]' "$cj" 2>/dev/null) md3=[$(sed -n 3p "$cm" 2>/dev/null | cut -c1-80)] cov=[$(sed -n '/^## Edge-case coverage/,/^## /p' "$cm" 2>/dev/null | sed -n 2p | cut -c1-90)] [$(tail -2 "$D108/task.out" | tr '\n' ' ' | cut -c1-160)]"; fails=1
+  echo "c108_no_classify_close WRONG (a) $ra1 then $ra2; (b) $rb1 then $rb2; (c) $rc1; (d) small run exit=$rcs, $rd1; (e) $re1; keys=$(jq -c 'keys_unsorted[0:3]' "$cj" 2>/dev/null) [$(tail -2 "$D108/task.out" | tr '\n' ' ' | cut -c1-200)]"; fails=1
 fi
 
 D65="${OUT:?}/c65"; rm -rf "${D65:?}"; mkdir -p "$D65"

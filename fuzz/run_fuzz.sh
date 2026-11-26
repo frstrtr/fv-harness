@@ -942,8 +942,9 @@ retention() {
   [ "${FV_NO_CLASSIFY:-0}" = 1 ] && { RETAIN_JSON='{"runs": 0, "skipped": "FV_NO_CLASSIFY=1"}'; return 0; }
   [ -n "$BIN_CLS" ] || { RETAIN_JSON='{"runs": 0, "skipped": "no classify build"}'; return 0; }
   local C="$RUN/classify" K="$RUN/classify/retained" W="$RUN/classify/retain-work" src=("$corpus") rc rr n done_ ok=true
+  rm -rf "$K" "$W"   # a reused --out: an earlier run's retained inputs are never labelled as this run's
   [ "$RETAIN_RUNS" -gt 0 ] || { RETAIN_JSON='{"runs": 0, "skipped": "retain_runs = 0"}'; return 0; }
-  mkdir -p "$C"; rm -rf "$K" "$W"; mkdir -p "$K" "$W"
+  mkdir -p "$C" "$K" "$W"
   find "$C" -maxdepth 1 -type f -name 'retain-artifact-*' -delete   # a reused --out: only this generation's stops count
   [ -d "$RUN/new_corpus" ] && src+=("$RUN/new_corpus")
   # The first directory receives libFuzzer's own new units (W, discarded); -reload=0: no timed re-reads.

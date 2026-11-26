@@ -13,9 +13,10 @@ FV_SOLUTION_REL="spec/solution"
 
 # Run a command at the configured CPU and priority caps.
 capped() { taskset -c "$FV_CPUSET" nice -n "$FV_NICE" "$@"; }
-# The same caps inside a fresh network namespace (only lo): builds, package managers, toolchain
-# auto-downloads and telemetry cannot reach the network, whatever their environment says. Not for a
-# command that enters a namespace itself (bwrap cannot nest on the gate host).
+# The same caps inside a fresh network namespace: builds, package managers, toolchain auto-downloads and
+# telemetry have no network interface but lo, whatever their environment says. The file system is shared
+# (--dev-bind / /), so host Unix sockets stay reachable. Not for a command that enters a namespace itself
+# (bwrap cannot nest on the gate host).
 capped_off() { capped bwrap --dev-bind / / --unshare-net -- "$@"; }
 
 # sbx [--rw DIR] [--ro PATH] [--chdir DIR] [--env NAME VALUE] [--share-net] -- CMD ARGS...

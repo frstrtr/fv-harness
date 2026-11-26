@@ -9,8 +9,9 @@
     formal_task.py discharge TASK            # Tier 2 on every open stub; walls go back to DECOMPOSE
     formal_task.py audit     TASK            # scripts/verify_proof.sh; failure -> DECOMPOSE
     formal_task.py couple    TASK            # fuzz/run_fuzz.sh; a mismatch opens a C++ bugfix task
-    formal_task.py close     TASK            # closure bundle: closure.json + closure.md
-    formal_task.py run       TASK            # discharge -> audit -> couple -> close until a stop
+    formal_task.py close     TASK [--reduced-coverage REASON]  # closure bundle: closure.json + closure.md; a
+                                             # record with reduced coverage stays in CLOSE (exit 11) without it
+    formal_task.py run       TASK [--reduced-coverage REASON]  # discharge -> audit -> couple -> close until a stop
     formal_task.py status    TASK
 
 States: SPEC_LOCK, DECOMPOSE, DISCHARGE, AUDIT, COUPLE, CLOSED, plus the halts BLOCKED (trusted
@@ -24,7 +25,7 @@ TIER2_MAX_ATTEMPTS=1, TIER2_BUDGET=4 in config/tier2.env; per task via init/set)
 attempt failed the same way (same_failure in the dispatcher report: all Mathlib-rejected, the
 same unsolved goal, ...). The counters are kept in state.json "tier2_stats" and the closure bundle.
 
-Exit: 0 step done; 10 needs Tier 1 (DECOMPOSE); 11 needs a human (BLOCKED); 12 C++ bugfix
+Exit: 0 step done; 10 needs Tier 1 (DECOMPOSE); 11 needs a human (BLOCKED, or a CLOSE refused for reduced coverage); 12 C++ bugfix
 opened; 3 error or illegal transition.
 """
 from __future__ import annotations
@@ -455,6 +456,15 @@ def harness_state() -> dict:
     return {"commit": "unknown", "kind": "unknown", "dirty": None, "changed": [], "extra": []}
 
 
+RETAIN_DEFAULT = 200000  # fuzz/run_fuzz.sh's default [fuzz] retain_runs
+
+
+def retention_seeds(ec: dict) -> int:
+    """The corpus inputs the retention generation replays before it generates: the classified inputs less the
+    ones retention itself kept."""
+    return max(0, int(ec.get("inputs") or 0) - len((ec.get("retention") or {}).get("retained") or []))
+
+
 def cmd_close(a):
     t = Task(a.task); st = t.load(); guard(st, "close")
     proj = pathlib.Path(st["project"])
@@ -496,12 +506,20 @@ def cmd_close(a):
             gaps.append(f"class-guided retention skipped: {rt['skipped']}")
         elif rt.get("complete") is not True or not rt.get("runs"):
             gaps.append(f"class-guided retention incomplete: {str(rt.get('error') or 'complete=' + str(rt.get('complete')))[:200]}")
+        elif rt.get("runs", 0) <= retention_seeds(ec):
+            # libFuzzer counts the replay of the inputs it starts from toward -runs: a budget at or below their
+            # number generated nothing, though the pass "completed"
+            gaps.append(f"class-guided retention generated nothing: a budget of {rt['runs']} executions, at or below "
+                        f"the {retention_seeds(ec)} corpus inputs it replays first")
     reduced = None
     if gaps:
         if not getattr(a, "reduced_coverage", None):
-            t.move(st, "ERROR", f"CLOSE refused: reduced coverage ({'; '.join(gaps)}); close it only with "
-                                "--reduced-coverage REASON, which the closure records")
-            return 3
+            # Stays in CLOSE: the same command with --reduced-coverage REASON (a person's decision) can close it.
+            st["history"].append({"t": now(), "event": "close refused", "note": f"reduced coverage ({'; '.join(gaps)})"})
+            t.save(st)
+            print(f"[{st['task']}] CLOSE refused: reduced coverage ({'; '.join(gaps)}); the task stays in CLOSE: close it "
+                  "only with --reduced-coverage REASON (formal_task.py close or run), which the closure records")
+            return NEEDS_HUMAN
         reduced = {"reason": a.reduced_coverage, "fuzz_record": "; ".join(gaps)}
     if fz.get("lang") == "tron-tvm":  # the reference must be named and must have run
         tt = fz.get("tron_tvm") or {}
@@ -603,13 +621,15 @@ def cmd_close(a):
                (f"- classes file `{ec.get('classes_file')}` sha256 `{ec.get('classes_file_sha256')}`; predicate sources "
                 f"sha256 `{ec.get('classes_source_sha256')}`; review deck: `{ec.get('review_deck')}`" if ec.get("classes_file")
                 else f"- classes.hpp sha256: `{ec.get('classes_header_sha256')}`; review deck: `{ec.get('review_deck')}`"),
-               "- **NOT EXERCISED (in the retained corpus" + (", and the class-guided retention pass" if (ec.get("retention") or {}).get("complete") else "")
+               "- **NOT EXERCISED (in the retained corpus" + (", and the class-guided retention pass" if (ec.get("retention") or {}).get("complete")
+                                                               and (ec.get("retention") or {}).get("runs", 0) > retention_seeds(ec) else "")
                + "):** " + (", ".join(ec.get("not_exercised") or []) or "none")]
         rt = ec.get("retention")
         if rt:
             md += [f"- class-guided retention: {rt.get('runs')} executions budgeted, {rt.get('executions')} done, seed {rt.get('seed')}, "
                    f"complete={rt.get('complete')}; {len(rt.get('retained') or [])} inputs kept, {rt.get('replayed')} replayed by the verdict binary"
-                   + (f"; {rt['error']}" if rt.get("error") else "") + (f"; {rt['skipped']}" if rt.get("skipped") else ""),
+                   + (f"; {rt['error']}" if rt.get("error") else "") + (f"; {rt['skipped']}" if rt.get("skipped") else "")
+                   + (f"; **budget below the default {RETAIN_DEFAULT}** ([fuzz] retain_runs)" if 0 < (rt.get("runs") or 0) < RETAIN_DEFAULT else ""),
                    "- retained inputs (fnv1a): " + (" ".join(rt.get("retained") or []) or "none")]
         md += [f"- {t['class']}: {t['inputs']} inputs ({t['pct_inputs']} %), {t['steps']} steps"
                + (f" — `{t['source']}`" if t.get("source") else "") for t in ec.get("classes", [])]
@@ -657,11 +677,13 @@ def main():
     p = sub.add_parser("set"); p.add_argument("task")
     p.add_argument("--budget", type=int); p.add_argument("--max-attempts", type=int)
     p.add_argument("--same-failure-wall", choices=("on", "off"))
-    for c in ("spec-lock", "discharge", "audit", "couple", "run", "status"):
+    for c in ("spec-lock", "discharge", "audit", "couple", "run", "status", "close"):
         sub.add_parser(c).add_argument("task")
-    p = sub.add_parser("close"); p.add_argument("task")
-    p.add_argument("--reduced-coverage", metavar="REASON",
-                   help="close a campaign run with FV_NO_CLASSIFY=1; REASON is recorded first in the closure")
+    for c in ("close", "run"):
+        sub.choices[c].add_argument("--reduced-coverage", metavar="REASON",
+                                    help="close a campaign whose record shows reduced coverage (no classification, a "
+                                         "classification error, or a class-guided retention pass that was skipped, incomplete "
+                                         "or generated nothing); REASON is recorded right after the signer in the closure")
     p = sub.add_parser("decompose"); p.add_argument("task"); p.add_argument("--by", required=True)
     p = sub.add_parser("tree", help="print the closed_tree record of a project directory (no task)")
     p.add_argument("project")
