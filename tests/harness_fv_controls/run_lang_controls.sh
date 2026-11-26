@@ -144,10 +144,10 @@ else
 lang_campaign c15_rust_clean rust "$R" impl --runs 1000000
 rc=$?; j="$OUT/c15_rust_clean/run/fuzz.json"
 lsan=$(cat "$OUT/c15_rust_clean/run/replay.log" "$OUT/c15_rust_clean/run/campaign.log" 2>/dev/null | grep -c LeakSanitizer)
-if [ $rc -eq 0 ] && [ "$(jq -r .verdict "$j")" = PASS ] && [ "$lsan" -eq 0 ]; then
+if [ $rc -eq 0 ] && [ "$(jq -r .verdict "$j")" = PASS ] && [ "$lsan" -eq 0 ] && classes_ok "$j"; then
   echo "c15_rust_clean OK $(jq -r '"runs=\(.runs) seconds=\(.campaign_seconds | .[0:6]) \(.stats)"' "$j") leak_reports=0"
 else
-  echo "c15_rust_clean WRONG exit=$rc leak_reports=$lsan $(jq -c '{verdict, detail}' "$j" 2>/dev/null)"; fails=1
+  echo "c15_rust_clean WRONG exit=$rc leak_reports=$lsan $(jq -c '{verdict, detail}' "$j" 2>/dev/null) $(classes_why "$j")"; fails=1
 fi
 
 lang_campaign c16_rust_drift rust "$R" impl-drift --runs 32000 --time 600
@@ -223,10 +223,10 @@ else
 fi
 lang_campaign c21_py_clean python "$P" impl --runs 1000000
 rc=$?; j="$OUT/c21_py_clean/run/fuzz.json"
-if [ $rc -eq 0 ] && [ "$(jq -r .verdict "$j")" = PASS ]; then
+if [ $rc -eq 0 ] && [ "$(jq -r .verdict "$j")" = PASS ] && classes_ok "$j"; then
   echo "c21_py_clean OK $(jq -r '"runs=\(.runs) seconds=\(.campaign_seconds | .[0:6]) \(.stats)"' "$j")"
 else
-  echo "c21_py_clean WRONG exit=$rc $(jq -c '{verdict, detail}' "$j" 2>/dev/null)"; fails=1
+  echo "c21_py_clean WRONG exit=$rc $(jq -c '{verdict, detail}' "$j" 2>/dev/null) $(classes_why "$j")"; fails=1
 fi
 lang_campaign c22_py_drift python "$P" impl-drift --runs 26000 --time 600
 rc=$?; j="$OUT/c22_py_drift/run/fuzz.json"; n=$(execs c22_py_drift)
@@ -290,7 +290,8 @@ lang_campaign c25_evm_clean evm "$E25" contract --runs "${FV_EVM_CLEAN_RUNS:-100
 rc=$?; j="$OUT/c25_evm_clean/run/fuzz.json"
 if [ $rc -eq 0 ] && [ "$(jq -r .verdict "$j")" = PASS ] && [ "$(jq -r .evm.solc_sha256 "$j")" = "$FV_SOLC_SHA256" ] \
    && [ "$(jq -r .evm.runtime_sha256 "$j")" = "$rt" ] && [ "$(jq '.classes.not_exercised | length' "$j")" = 0 ] \
-   && jq -e '[.classes.classes[] | select(.class == "outcome: submit(uint64) -> revert LimitExceeded()" and .inputs > 0)] | length == 1' "$j" > /dev/null; then
+   && jq -e '[.classes.classes[] | select(.class == "outcome: submit(uint64) -> revert LimitExceeded()" and .inputs > 0)] | length == 1' "$j" > /dev/null \
+   && classes_ok "$j"; then
   echo "c25_evm_clean OK $(jq -r '"runs=\(.runs) seconds=\(.campaign_seconds | .[0:6]) runtime=\(.evm.runtime_sha256 | .[0:12]) (pinned) solc=\(.evm.solc_sha256 | .[0:12]) classes=\([.classes.classes[] | select(.kind == "outcome")] | length) not_exercised=0 \(.stats)"' "$j")"
 else
   echo "c25_evm_clean WRONG exit=$rc $(jq -c '{verdict, detail, evm: (.evm | {solc_sha256, runtime_sha256}), not_exercised: .classes.not_exercised, cls_error: .classes.error}' "$j" 2>/dev/null)"; fails=1
@@ -356,6 +357,7 @@ fi
 fi  # evm
 TH="${FV_TRON_TVM_HOME:-$FV_ROOT/tron-tvm}"; F="$ROOT/examples/token-faucet-tron-tvm"; TRON_TVM_ALL="c33_tron_tvm_trc10 c34_tron_tvm_clean c35_tron_tvm_drift c36_tron_tvm_refusals c37_tron_tvm_vendored_tamper c41_tron_tvm_coverage c49_tron_tvm_itx_drop c51_tron_tvm_guidance c56_tron_tvm_roundtrip c57_tron_tvm_build_pins c64_tron_tvm_record c109_tron_tvm_replay_drivers"
 fresh() { rm -rf "${1:?}"; mkdir -p "$1"; }  # fresh DIR: an empty directory (refuses an empty argument)
+. "$ROOT/tests/harness_fv_controls/lib_classes.sh"   # classes_ok: a clean run's classification ran to the end
 tron_tvm_campaign() { # tron_tvm_campaign ID DIR IMPL ARGS...  (signed faucet spec)
   local id="$1" dir="$2" impl="$3"; shift 3
   fresh "${OUT:?}/${id:?}"
@@ -399,7 +401,7 @@ TRON_TVM_MERGE=1 tron_tvm_campaign c34_tron_tvm_clean "$F" contract --runs "${FV
 rc=$?; j="$OUT/c34_tron_tvm_clean/run/fuzz.json"
 n34a=$(ls "$F/fuzz/corpus" | wc -l); n34b=$(ls "$OUT/c34_tron_tvm_clean/corpus" | wc -l)
 nu34=$(jq -r .stats "$j" 2>/dev/null | grep -oE 'new_units_added: *[0-9]+' | grep -oE '[0-9]+$')
-if [ $rc -eq 0 ] && grep -q '^MERGE-OUTER: successful in' "$OUT/c34_tron_tvm_clean/run/merge.log" && [ "${nu34:-0}" -gt 0 ] && [ "$n34b" -gt "$n34a" ] && jq -e --arg c "$FV_JAVA_TRON_COMMIT" '.verdict == "PASS" and .tron_tvm.java_tron_commit == $c
+if [ $rc -eq 0 ] && grep -q '^MERGE-OUTER: successful in' "$OUT/c34_tron_tvm_clean/run/merge.log" && [ "${nu34:-0}" -gt 0 ] && [ "$n34b" -gt "$n34a" ] && classes_ok "$j" && jq -e --arg c "$FV_JAVA_TRON_COMMIT" '.verdict == "PASS" and .tron_tvm.java_tron_commit == $c
      and .tron_tvm.chain_profile.sha256 == "9012d4a9211268c1861a8c052ab26b82e4feab3cf96d33c643fdbf378b9b0c8f"
      and (.tron_tvm.network | startswith("none (observed: only lo")) and (.tron_tvm.cpu_time_limit | startswith("disabled (--debug, observed"))
      and (.tron_tvm.driver_config | contains("energy_limit_hard_fork=true")) and (.tron_tvm.classpath_manifest_sha256 | length) == 64
@@ -662,7 +664,7 @@ fi
 tron_tvm_campaign c41_tron_tvm_coverage "$F" contract --time 120 --impl-dir "$ROOT/tests/harness_fv_controls/tron-tvm/contract-unreachable"
 rc=$?; j="$OUT/c41_tron_tvm_coverage/run/fuzz.json"
 ln=$(grep -n 'note = amount' "$ROOT/tests/harness_fv_controls/tron-tvm/contract-unreachable/CappedFaucet.sol" | cut -d: -f1)
-if [ $rc -eq 0 ] && jq -e --arg w "CappedFaucet.sol:$ln " '.verdict == "PASS" and .tron_tvm.contract_coverage.blocks_hit > 0
+if [ $rc -eq 0 ] && classes_ok "$j" && jq -e --arg w "CappedFaucet.sol:$ln " '.verdict == "PASS" and .tron_tvm.contract_coverage.blocks_hit > 0
      and ([.tron_tvm.contract_coverage.not_exercised[].at | select(. != null and startswith($w))] | length) >= 1' "$j" > /dev/null; then
   echo "c41_tron_tvm_coverage OK PASS; $(jq -r '.tron_tvm.contract_coverage | "\(.blocks_hit)/\(.blocks_total) blocks"' "$j"); NOT EXERCISED includes the unreachable branch at line $ln: $(jq -r --arg w "CappedFaucet.sol:$ln " '[.tron_tvm.contract_coverage.not_exercised[] | select(.at != null and (.at | startswith($w)))][0].at' "$j")"
 else

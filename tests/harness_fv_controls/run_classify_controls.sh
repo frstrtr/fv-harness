@@ -22,15 +22,17 @@
 #                      FV_CLASSIFY_RENDER and FV_CLASSIFY_TIME_IMPL exported, the drift implementation still
 #                      FAILs as a mismatch, and its reproducer is classified against the same sources with no
 #                      classification error; (b) a classes.py that raises at import: the clean run PASSes with
-#                      classes.error naming it, the drift run still FAILs; (c) the verdict wrapper and
+#                      classes.error naming it (and the clean controls' classes_ok refuses it: the red for that
+#                      check), the drift run still FAILs; (c) the verdict wrapper and
 #                      fv_diff.py name neither fv_classify.py, fv_sink nor FV_CLASSIFY; (d) the replay never
 #                      imports the implementation (an implementation that records each import: none from
 #                      fv_classify.py); (e) TRON-TVM: a describe() that sends a transaction: classes.error
 #                      "sent ... transaction", verdict PASS, and the run's TRON-TVM record counts only the
 #                      verdict processes; (f) a describe() that raises mid-replay: PASS, and classes.error
 #                      says the classification replay stopped (never a silent partial classification)
-#   c73_retention_keeps  the class-guided retention pass (fuzz/run_fuzz.sh 4b) on the clean C++ fixture and
-#                      the clean Python example: PASS; the record says seed 1, 200000 executions budgeted and
+#   c73_retention_keeps, c73_py_retention_keeps  the class-guided retention pass (fuzz/run_fuzz.sh 4b) on the
+#                      clean C++ fixture (no toolchain beyond the gate's, so it runs on hosted CI too) and on the
+#                      clean Python example (SKIP without Python): PASS; the record says seed 1, 200000 executions budgeted and
 #                      done, complete; the retained files are exactly the recorded hashes, each replayed by the
 #                      verdict binary (retain-replay.log, no classify line); at least one class is hit only by a
 #                      retained input and is therefore not NOT EXERCISED; the deck's heading names the retention
@@ -44,6 +46,7 @@
 # is in FV_REQUIRE_LANGS). Exit 0 iff none is WRONG.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$ROOT/tests/harness_fv_controls/lib_classes.sh"   # classes_ok, the clean controls' classification check
 . "$ROOT/scripts/lib.sh"
 OUT="$1"; mkdir -p "$OUT"
 LOCK="$ROOT/locks/risk-limit.sha256"; LEAN="$ROOT/examples/risk-limit/lean"
@@ -217,12 +220,12 @@ PYEOF
   fi
   if [ $rca -eq 1 ] && jq -e '(.detail | contains("oracle/implementation mismatch")) and .classes.error == null
        and (.classes.finding_classes | length) >= 1 and (.classes.classes_source_sha256 | test("^[0-9a-f]{64}$"))' "$ja" > /dev/null \
-     && [ $rcb -eq 0 ] && jq -e '.verdict == "PASS" and (.classes.error // "" | contains("c75: classes.py raises"))' "$jb" > /dev/null \
+     && [ $rcb -eq 0 ] && jq -e '.verdict == "PASS" and (.classes.error // "" | contains("c75: classes.py raises"))' "$jb" > /dev/null && ! classes_ok "$jb" \
      && [ $rcb2 -eq 1 ] && jq -e '.detail | contains("oracle/implementation mismatch")' "$jb2" > /dev/null \
-     && [ $rcf -eq 0 ] && jq -e '.verdict == "PASS" and (.classes.error // "" | contains("classification replay exited") and contains("retention: the generation exited"))' "$jf" > /dev/null \
+     && [ $rcf -eq 0 ] && jq -e '.verdict == "PASS" and (.classes.error // "" | contains("classification replay exited") and contains("retention: the generation exited"))' "$jf" > /dev/null && ! classes_ok "$jf" \
      && [ -z "$leak" ] && [ $rcd -eq 0 ] && [ "$n_v" -gt 0 ] && [ "$n_c" -eq 0 ] && [[ "$te" != WRONG* ]] \
      && { [ "$te" != SKIP ] || [[ " ${FV_REQUIRE_LANGS:-} " != *" tron-tvm "* ]]; }; then
-    echo "c75_py_classify_isolation OK (a) env exported, drift still FAIL ($(jq -r .detail "$ja")), its reproducer classified with no error ($(jq -c '.classes.finding_classes | to_entries[0].value' "$ja" | cut -c1-60)); (b) raising classes.py: PASS with error [$(jq -r '.classes.error | .[0:70]' "$jb")], drift FAIL; (c) verdict wrapper/driver name no classify path; (d) implementation imported $n_v time(s) by the verdict path, 0 by the replay; (e) tron-tvm $te; (f) a describe() raising mid-replay: PASS, [$(jq -r '.classes.error | .[0:90]' "$jf")]"
+    echo "c75_py_classify_isolation OK (a) env exported, drift still FAIL ($(jq -r .detail "$ja")), its reproducer classified with no error ($(jq -c '.classes.finding_classes | to_entries[0].value' "$ja" | cut -c1-60)); (b) raising classes.py: PASS with error [$(jq -r '.classes.error | .[0:70]' "$jb")], refused by the clean controls' classes_ok, drift FAIL; (c) verdict wrapper/driver name no classify path; (d) implementation imported $n_v time(s) by the verdict path, 0 by the replay; (e) tron-tvm $te; (f) a describe() raising mid-replay: PASS, [$(jq -r '.classes.error | .[0:90]' "$jf")], refused by classes_ok"
   else
     echo "c75_py_classify_isolation WRONG a: exit=$rca [$(jq -r .detail "$ja" 2>/dev/null)] a-cls=[$(jq -r '.classes.error // "none"' "$ja" 2>/dev/null | cut -c1-80)] b: exit=$rcb [$(jq -c '{verdict, err: .classes.error}' "$jb" 2>/dev/null)] b2: exit=$rcb2 c: [$leak] d: exit=$rcd verdict=$n_v classify=$n_c e: $te f: exit=$rcf $(jq -c '{verdict, err: .classes.error}' "$jf" 2>/dev/null | cut -c1-200)"; fails=1
   fi
@@ -251,22 +254,27 @@ print("; ".join(only[:4]) + (f" (+{len(only) - 4})" if len(only) > 4 else ""))
 sys.exit(0 if only and not (set(only) & ne) else 1)
 PYEOF
 }
+fresh "$OUT/c73_cpp"; cp -r "$ROOT/fixtures/conservation_cpp/fuzz/corpus" "$OUT/c73_cpp/corpus"   # C++: no toolchain beyond the gate's
+# retention is the subject here: the fixture's small budget is raised to the default, 200000 (retain_check)
+cp -r "$ROOT/fixtures/conservation_cpp/fuzz" "$OUT/c73_cpp/fuzz"; sed -i 's/^retain_runs = .*/retain_runs = 200000/' "$OUT/c73_cpp/fuzz/fv.toml"
+"$ROOT/fuzz/run_fuzz.sh" --lean-project "$ROOT/fixtures/conservation" --lock "$ROOT/locks/conservation.sha256" \
+  --cmake-dir "$OUT/c73_cpp/fuzz" --target diff_transfer --corpus "$OUT/c73_cpp/corpus" --no-merge \
+  --impl-dir "$ROOT/fixtures/conservation_cpp/impl" --out "$OUT/c73_cpp/run" --runs 20000 > "$OUT/c73_cpp/run_fuzz.out" 2>&1; rc1=$?
+w1=$(retain_check "$OUT/c73_cpp/run" 3> "$OUT/c73_cpp/only.txt")
+if [ $rc1 -eq 0 ] && [ -z "$w1" ]; then
+  echo "c73_retention_keeps OK C++: PASS, $(jq -r '.classes.retention | "\(.retained | length) kept, \(.replayed) replayed, seed \(.seed), \(.executions) executions"' "$OUT/c73_cpp/run/fuzz.json"); only via retention: $(cat "$OUT/c73_cpp/only.txt")"
+else
+  echo "c73_retention_keeps WRONG C++ exit=$rc1 [$w1] $(jq -c '{verdict, detail}' "$OUT/c73_cpp/run/fuzz.json" 2>/dev/null)"; fails=1
+fi
 if [ "$have_py" = 1 ]; then
-  fresh "$OUT/c73_cpp"; cp -r "$ROOT/fixtures/conservation_cpp/fuzz/corpus" "$OUT/c73_cpp/corpus"
-  # retention is the subject here: the fixture's small budget is raised to the default, 200000 (retain_check)
-  cp -r "$ROOT/fixtures/conservation_cpp/fuzz" "$OUT/c73_cpp/fuzz"; sed -i 's/^retain_runs = .*/retain_runs = 200000/' "$OUT/c73_cpp/fuzz/fv.toml"
-  "$ROOT/fuzz/run_fuzz.sh" --lean-project "$ROOT/fixtures/conservation" --lock "$ROOT/locks/conservation.sha256" \
-    --cmake-dir "$OUT/c73_cpp/fuzz" --target diff_transfer --corpus "$OUT/c73_cpp/corpus" --no-merge \
-    --impl-dir "$ROOT/fixtures/conservation_cpp/impl" --out "$OUT/c73_cpp/run" --runs 20000 > "$OUT/c73_cpp/run_fuzz.out" 2>&1; rc1=$?
-  w1=$(retain_check "$OUT/c73_cpp/run" 3> "$OUT/c73_cpp/only.txt")
   campaign c73_py python "$P" impl diff_risk "$LOCK" "$LEAN" --runs 20000; rc2=$?
   w2=$(retain_check "$OUT/c73_py/run" 3> "$OUT/c73_py/only.txt")
-  if [ $rc1 -eq 0 ] && [ $rc2 -eq 0 ] && [ -z "$w1" ] && [ -z "$w2" ]; then
-    echo "c73_retention_keeps OK C++: PASS, $(jq -r '.classes.retention | "\(.retained | length) kept, \(.replayed) replayed, seed \(.seed), \(.executions) executions"' "$OUT/c73_cpp/run/fuzz.json"); only via retention: $(cat "$OUT/c73_cpp/only.txt"). Python: PASS, $(jq -r '.classes.retention | "\(.retained | length) kept, \(.replayed) replayed"' "$OUT/c73_py/run/fuzz.json"); only via retention: $(cat "$OUT/c73_py/only.txt")"
+  if [ $rc2 -eq 0 ] && [ -z "$w2" ]; then
+    echo "c73_py_retention_keeps OK Python: PASS, $(jq -r '.classes.retention | "\(.retained | length) kept, \(.replayed) replayed"' "$OUT/c73_py/run/fuzz.json"); only via retention: $(cat "$OUT/c73_py/only.txt")"
   else
-    echo "c73_retention_keeps WRONG C++ exit=$rc1 [$w1] $(jq -c '{verdict, detail}' "$OUT/c73_cpp/run/fuzz.json" 2>/dev/null); Python exit=$rc2 [$w2] $(jq -c '{verdict, detail}' "$OUT/c73_py/run/fuzz.json" 2>/dev/null)"; fails=1
+    echo "c73_py_retention_keeps WRONG Python exit=$rc2 [$w2] $(jq -c '{verdict, detail}' "$OUT/c73_py/run/fuzz.json" 2>/dev/null)"; fails=1
   fi
-else absent python "$PY" c73_retention_keeps; fi
+else absent python "$PY" c73_py_retention_keeps; fi
 
 # --- c74: a finding only the retention pass reaches; three runs, the same result ---
 if [ "$have_py" = 1 ]; then

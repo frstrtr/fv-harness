@@ -77,14 +77,21 @@
 #                 pinned 2.39 sysroot: PASS, its bundle needs glibc <= 2.39 and no GLIBCXX; (c) the 2.42
 #                 caller with the sysroot: ERROR (it does not compile); (d) an ssh worker with no declared
 #                 target: ERROR before any ssh connection; (e) a target that is not a version
-#                 ("latest"), (f) objdump failing on the bundle: ERROR before shipping. SKIPPED without
+#                 ("latest"), (f) objdump failing on the bundle, (g) a bundle with no GLIBC_ symbol version
+#                 (objdump reads nothing): ERROR before shipping. SKIPPED without
 #                 FV_BUILD_SYSROOT on the host.
 #   c89_retain_artifact  an input on which the retention generation stops (a trap in the binding, reached
 #                 only there) is replayed by the verdict binary: FAIL with the reproducer kept.
+#   c112_retain_paths  the retention replay set whatever the path: (a) an --out holding a space: c89's stop is still
+#                 replayed, FAIL; (b) a reused --out: an earlier run's stop is neither listed nor replayed, PASS.
 #   c90_retention_recorded  (a) a generation stopped by its time guard is in classes.error; (b) FV_NO_CLASSIFY=1
 #                 is recorded (no classification, no retention), never silent.
-#   c108_no_classify_close  CLOSE of that FV_NO_CLASSIFY=1 campaign is refused; with --reduced-coverage REASON it
-#                 closes, the reason recorded first (after the signer) in closure.json and closure.md.
+#   c113_hook_hosts_env  a test hook set in config/hosts.env without export is recorded in fuzz.json test_hooks.
+#   c108_no_classify_close  CLOSE reads coverage from the record: the FV_NO_CLASSIFY=1 campaign (c90 (b)) and the
+#                 one whose retention hit its time guard (c90 (a)) are refused; with --reduced-coverage REASON
+#                 the first closes, the reason recorded right after the signer in closure.json and at the head
+#                 of closure.md, whose coverage section says "not classified"; a record with a test hook is
+#                 refused even with the flag.
 #   c59_merge_inner_start  the inner merge process exits at start, before any input (no input to blame;
 #                 libFuzzer exits 0 having merged nothing): ERROR "did not complete in one attempt".
 #   c30_draft_not_countable  a draft (an UNSIGNED spec_lock.sh manifest) can be validated with
@@ -98,6 +105,7 @@
 # never write to the persisted corpus (--no-merge; the corpus is copied into OUTDIR first).
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$ROOT/tests/harness_fv_controls/lib_classes.sh"   # classes_ok: a clean run's classification ran to the end
 . "$ROOT/scripts/lib.sh"
 OUT="$1"; mkdir -p "$OUT"
 FIX="$ROOT/fixtures/conservation"; LOCK="$ROOT/locks/conservation.sha256"
@@ -117,10 +125,10 @@ campaign c1_fuzz --runs 1000000
 rc=$?
 j="$OUT/c1_fuzz/run/fuzz.json"
 lsan=$(cat "$OUT/c1_fuzz/run/replay.log" "$OUT/c1_fuzz/run/campaign.log" 2>/dev/null | grep -c 'LeakSanitizer')
-if [ $rc -eq 0 ] && [ "$(jq -r .verdict "$j")" = PASS ] && [ "$lsan" -eq 0 ]; then
+if [ $rc -eq 0 ] && [ "$(jq -r .verdict "$j")" = PASS ] && [ "$lsan" -eq 0 ] && classes_ok "$j"; then
   echo "c1_fuzz OK $(jq -r '"runs=\(.runs) seconds=\(.campaign_seconds) \(.stats)"' "$j") leak_reports=0"
 else
-  echo "c1_fuzz WRONG exit=$rc leak_reports=$lsan $(jq -c '{verdict,detail,mismatch}' "$j" 2>/dev/null)"; fails=1
+  echo "c1_fuzz WRONG exit=$rc leak_reports=$lsan $(jq -c '{verdict,detail,mismatch}' "$j" 2>/dev/null) $(classes_why "$j")"; fails=1
 fi
 
 campaign c6_cpp_drift --time 10 --impl-dir "$ROOT/tests/harness_fv_controls/variants/c6_drift"
@@ -296,7 +304,7 @@ cp -r "$CPP/corpus" "$Z/corpus"
 "$ROOT/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$Z/ex/fuzz" --target diff_transfer \
   --corpus "$Z/corpus" --no-merge --runs 3000 --out "$Z/run" > "$Z/run_fuzz.out" 2>&1; src=$?
 j32="$Z/run/fuzz.json"
-if [ -z "$bad32" ] && [ $src -eq 0 ] && jq -e '.verdict == "PASS" and .limits.max_len == 300 and .limits.len_control == 0' "$j32" > /dev/null \
+if [ -z "$bad32" ] && [ $src -eq 0 ] && classes_ok "$j32" && jq -e '.verdict == "PASS" and .limits.max_len == 300 and .limits.len_control == 0' "$j32" > /dev/null \
    && grep -q 'lim: 300' "$Z/run/campaign.log" && ! grep -q -- '-max_len is not provided' "$Z/run/campaign.log" \
    && jq -e '.limits.max_len == null and .limits.len_control == null' "$OUT/c1_fuzz/run/fuzz.json" > /dev/null; then
   echo "c32_len_limits OK max_len=0, len_control=-1: ERROR before build; max_len=300 len_control=0: campaign at lim 300, recorded $(jq -c '.limits | {max_len, len_control}' "$j32"); c1 records null"
@@ -308,7 +316,7 @@ campaign c38_jobs_clean --jobs 4 --runs 40000
 rca=$?; ja="$OUT/c38_jobs_clean/run/fuzz.json"
 campaign c38_jobs_one --jobs 4 --time 30 --impl-dir "$ROOT/tests/harness_fv_controls/variants/c38_one_worker"
 rcb=$?; jb="$OUT/c38_jobs_one/run/fuzz.json"
-if [ $rca -eq 0 ] && jq -e '.verdict == "PASS" and .jobs == 4 and (.workers | length) == 4 and ([.workers[].executions] | all(. != null))
+if [ $rca -eq 0 ] && classes_ok "$ja" && jq -e '.verdict == "PASS" and .jobs == 4 and (.workers | length) == 4 and ([.workers[].executions] | all(. != null))
      and .total_executions == ([.workers[].executions] | add) and .total_executions >= 40000' "$ja" > /dev/null \
    && [ $rcb -eq 1 ] && jq -e '(.detail | contains("oracle/implementation mismatch") and contains("worker 2 of 4"))
      and ([.workers[] | select(any(.batches[]; .exit != 0)) | .worker] == [2])' "$jb" > /dev/null; then
@@ -329,7 +337,7 @@ rm -rf "${T1:?}/bundle/out"  # the refused run's own output is not part of a bun
 tar -cf "$X39/remanifested.tar" -C "$T1" bundle
 campaign c39_remote_remanifested --jobs 1 --remote local:2 --runs 3000 --bundle "$X39/remanifested.tar"
 rcd=$?; jd="$OUT/c39_remote_remanifested/run/fuzz.json"
-if [ $rca -eq 0 ] && jq -e '.verdict == "PASS" and (.workers | length) == 3 and ([.workers[] | select(.remote == true)] | length) == 2
+if [ $rca -eq 0 ] && classes_ok "$ja" && jq -e '.verdict == "PASS" and (.workers | length) == 3 and ([.workers[] | select(.remote == true)] | length) == 2
      and .total_executions == ([.workers[].executions] | add) and .total_executions >= 30000
      and (.remote.bundle_sha256 | length) == 64 and .remote.bundle_sha256 == .remote.built_sha256
      and (.remote.worker_env.glibc | length) > 0 and (.remote.worker_env.libstdcxx_sha256 | length) == 64' "$ja" > /dev/null \
@@ -422,7 +430,7 @@ fi
 
 campaign c62_slow_units_jobs --jobs 2 --runs 4000 --impl-dir "$ROOT/tests/harness_fv_controls/variants/c62_slow_first"
 rc=$?; j="$OUT/c62_slow_units_jobs/run/fuzz.json"
-if [ $rc -eq 0 ] && jq -e '.verdict == "PASS" and (.slow_units | length) >= 1 and any(.slow_units[]; test("^w[0-9]+-slow-unit-")) and all(.slow_units[]; test("^(w[0-9]+|retain)-slow-unit-"))' "$j" > /dev/null; then
+if [ $rc -eq 0 ] && classes_ok "$j" && jq -e '.verdict == "PASS" and (.slow_units | length) >= 1 and any(.slow_units[]; test("^w[0-9]+-slow-unit-")) and all(.slow_units[]; test("^(w[0-9]+|retain)-slow-unit-"))' "$j" > /dev/null; then
   echo "c62_slow_units_jobs OK --jobs 2, a slow but correct first input per worker: PASS, slow units recorded: $(jq -r '.slow_units | join(" ") | .[0:120]' "$j")"
 else
   echo "c62_slow_units_jobs WRONG exit=$rc $(jq -c '{verdict, detail, slow_units}' "$j" 2>/dev/null | cut -c1-300)"; fails=1
@@ -435,7 +443,7 @@ for i in $(seq 1 240); do [ -e "$D63/run/build" ] && break; sleep 0.5; done
   --no-merge --runs 1000 --out "$D63/run" > "$D63/b.out" 2>&1; rb=$?
 alive=$(kill -0 $pa 2>/dev/null && echo yes || echo no); wait $pa; ra=$?
 if [ "$alive" = yes ] && [ $rb -eq 3 ] && grep -q 'another run holds' "$D63/b.out" && [ $ra -eq 0 ] \
-   && jq -e '.verdict == "PASS" and (.runs == "300000")' "$D63/run/fuzz.json" > /dev/null; then
+   && classes_ok "$D63/run/fuzz.json" && jq -e '.verdict == "PASS" and (.runs == "300000")' "$D63/run/fuzz.json" > /dev/null; then
   echo "c63_out_lock OK a second run on a busy --out: refused (exit 3, $(grep -m1 -o 'another run holds[^:]*' "$D63/b.out")); the first run: PASS, its record intact"
 else
   echo "c63_out_lock WRONG second exit=$rb [$(tail -1 "$D63/b.out" | cut -c1-100)] overlap=$alive first exit=$ra $(jq -c '{verdict, runs}' "$D63/run/fuzz.json" 2>/dev/null)"; fails=1
@@ -460,6 +468,30 @@ else
   echo "c89_retain_artifact WRONG exit=$rc $(jq -c '{verdict, detail, ret: (.classes.retention | {error, generation_artifacts}), err: .classes.error}' "$j" 2>/dev/null | cut -c1-400)"; fails=1
 fi
 
+# Control 112: the retention replay set is built from the run's own files whatever the path: (a) c89's trap with
+# an --out holding a space: the input the generation stopped on is still replayed, FAIL; (b) a reused --out: a
+# first run there stops on the trap; a second run there with the binding untrapped must neither list nor replay
+# the first run's stop: PASS, no generation artifact, every retained input replayed and nothing else.
+r112=""; D112="$OUT/c112 out"; rm -rf "$D112"; mkdir -p "$D112"
+c112() { # c112 FUZZDIR RUNDIR CORPUS
+  "$ROOT/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$1" --target diff_transfer --corpus "$3" \
+    --no-merge --out "$2" --runs 1 --impl-dir "$ROOT/fixtures/conservation_cpp/impl" > "$2.out" 2>&1; }
+cp -r "$CPP/corpus" "$D112/corpus a"; c112 "$V89" "$D112/a run" "$D112/corpus a"; ra=$?; ja="$D112/a run/fuzz.json"
+[ $ra -eq 1 ] && jq -e '(.detail | contains("retention replay")) and (.classes.retention.generation_artifacts | length) >= 1' "$ja" > /dev/null \
+  || r112+="(a) exit=$ra [$(jq -r .detail "$ja" 2>/dev/null | cut -c1-100)] ga=$(jq -c .classes.retention.generation_artifacts "$ja" 2>/dev/null); "
+V112="$OUT/c112_fuzzdir"; rm -rf "$V112"; mkdir -p "$V112"; cp -r "$CPP"/. "$V112"/; sed -i 's/^retain_runs = .*/retain_runs = 200000/' "$V112/fv.toml"
+B112="$OUT/c112b"; rm -rf "$B112"; mkdir -p "$B112"; cp -r "$CPP/corpus" "$B112/corpus1"; cp -r "$CPP/corpus" "$B112/corpus2"
+c112 "$V89" "$B112/run" "$B112/corpus1"; rb1=$?
+c112 "$V112" "$B112/run" "$B112/corpus2"; rb2=$?; jb="$B112/run/fuzz.json"
+[ $rb1 -eq 1 ] && [ $rb2 -eq 0 ] && jq -e '.verdict == "PASS" and (.classes.retention.generation_artifacts | length) == 0
+     and .classes.retention.replayed == (.classes.retention.retained | length)' "$jb" > /dev/null \
+  || r112+="(b) first exit=$rb1, second exit=$rb2 $(jq -c '{verdict, detail, ga: .classes.retention.generation_artifacts, n: (.classes.retention.retained | length), replayed: .classes.retention.replayed}' "$jb" 2>/dev/null | cut -c1-200); "
+if [ -z "$r112" ]; then
+  echo "c112_retain_paths OK (a) --out with a space: the generation's stop replayed, FAIL ($(jq -r '.detail | .[0:70]' "$ja")); (b) a reused --out: the earlier run's stop neither listed nor replayed, PASS, $(jq -r '.classes.retention.replayed' "$jb") retained inputs replayed"
+else
+  echo "c112_retain_paths WRONG $r112"; fails=1
+fi
+
 # Control 90: a retention pass that did not run in full is never silent. (a) The time guard stops the generation
 # (FV_RETAIN_GUARD_S=1, budget 200000): classes.error names it. (b) FV_NO_CLASSIFY=1: the record says that
 # neither classification nor retention ran.
@@ -473,28 +505,53 @@ else
   echo "c90_retention_recorded WRONG (a) exit=$ra $(jq -c '{verdict, err: .classes.error, ret: .classes.retention.error}' "$ja" 2>/dev/null | cut -c1-200); (b) exit=$rb $(jq -c '{verdict, classes}' "$jb" 2>/dev/null | cut -c1-200)"; fails=1
 fi
 
-# Control 108: a campaign run with FV_NO_CLASSIFY=1 (c90 (b)) never closes as a full pass: CLOSE is refused, and
-# with --reduced-coverage REASON it closes with that reason recorded first in closure.json and closure.md.
+# Control 113: a test hook set in config/hosts.env without export acts in run_fuzz.sh all the same, so it is
+# recorded too: a harness copy whose hosts.env sets FV_TEST_HOOK_C113 (a name no code reads) without export:
+# fuzz.json test_hooks names it.
+H113="$OUT/c113-harness"; rm -rf "$H113"; mkdir -p "$H113"
+(cd "$ROOT" && tar --exclude=./tests/harness_fv_controls/logs -cf - .) | (cd "$H113" && tar -xf -)
+printf '\nFV_TEST_HOOK_C113=1\n' >> "$H113/config/hosts.env"
+rm -rf "$OUT/c113"; mkdir -p "$OUT/c113"; cp -r "$CPP/corpus" "$OUT/c113/corpus"
+env -u FV_TEST_HOOK_C113 "$H113/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$CPP" --target diff_transfer \
+  --corpus "$OUT/c113/corpus" --no-merge --out "$OUT/c113/run" --runs 200 > "$OUT/c113/run_fuzz.out" 2>&1; rc=$?
+j="$OUT/c113/run/fuzz.json"
+if [ $rc -eq 0 ] && jq -e '.verdict == "PASS" and .test_hooks == ["FV_TEST_HOOK_C113"]' "$j" > /dev/null; then
+  echo "c113_hook_hosts_env OK a test hook set in hosts.env without export is recorded: test_hooks $(jq -c .test_hooks "$j")"
+else
+  echo "c113_hook_hosts_env WRONG exit=$rc $(jq -c '{verdict, detail, test_hooks}' "$j" 2>/dev/null | cut -c1-200)"; fails=1
+fi
+
+# Control 108: CLOSE reads the coverage from the record. A campaign with no classification (FV_NO_CLASSIFY=1, c90 (b))
+# or an incomplete retention pass (its time guard, c90 (a)) never closes as a full pass: CLOSE is refused, and
+# with --reduced-coverage REASON it closes with that reason recorded first in closure.json and closure.md,
+# whose coverage section says "not classified". A record with a test hook is refused even with the flag.
 D108="$OUT/c108"; rm -rf "$D108"; mkdir -p "$D108/audit"; cp -r "$FIX" "$D108/proj"; rm -rf "$D108/proj/.lake"
 echo '{"verdict": "PASS", "stages": {}}' > "$D108/audit/verdict.json"
+mkdir -p "$D108/hooked"   # c1's clean record with a test hook added
+jq '.test_hooks = ["FV_TEST_HOOK_REPLAY_STATUS"]' "$OUT/c1_fuzz/run/fuzz.json" > "$D108/hooked/fuzz.json" 2>/dev/null
 FT=(python3 -I "$ROOT/scripts/formal_task.py"); T108="c108-init-$$"
 "${FT[@]}" init "$T108" --project "$D108/proj" --lock "$LOCK" --cmake-dir "$CPP" --target diff_transfer --fuzz-runs 1000 > "$D108/task.out" 2>&1
-r108=(); for k in plain reduced; do
-  tk="c108-$k-$$"; mkdir -p "$FV_ROOT/tasks/$tk"
-  jq --arg a "$D108/audit" --arg c "$OUT/c90b_no_classify/run" --arg t "$tk" '.task = $t | .state = "CLOSE" | .last_audit = $a | .last_couple = $c' \
+r108=(); for k in plain:c90b_no_classify/run: reduced:c90b_no_classify/run:x guard:c90a_retain_guard/run: hook:c108/hooked:x; do
+  IFS=: read -r name run flag <<< "$k"; tk="c108-$name-$$"; mkdir -p "$FV_ROOT/tasks/$tk"
+  jq --arg a "$D108/audit" --arg c "$OUT/$run" --arg t "$tk" '.task = $t | .state = "CLOSE" | .last_audit = $a | .last_couple = $c' \
     "$FV_ROOT/tasks/$T108/state.json" > "$FV_ROOT/tasks/$tk/state.json"
-  if [ $k = plain ]; then "${FT[@]}" close "$tk" >> "$D108/task.out" 2>&1; else "${FT[@]}" close "$tk" --reduced-coverage "c108: a control" >> "$D108/task.out" 2>&1; fi
+  if [ -z "$flag" ]; then "${FT[@]}" close "$tk" >> "$D108/task.out" 2>&1; else "${FT[@]}" close "$tk" --reduced-coverage "c108: a control" >> "$D108/task.out" 2>&1; fi
   r108+=("$?:$(jq -r .state "$FV_ROOT/tasks/$tk/state.json" 2>/dev/null):$([ -e "$FV_ROOT/tasks/$tk/closure.json" ] && echo closure || echo none)")
   cp -r "$FV_ROOT/tasks/$tk" "$D108/"; rm -rf "${FV_ROOT:?}/tasks/${tk:?}"
 done
 cp -r "$FV_ROOT/tasks/$T108" "$D108/" 2>/dev/null; rm -rf "${FV_ROOT:?}/tasks/${T108:?}"
-cj="$D108/c108-reduced-$$/closure.json"
-if [ "${r108[0]}" = "3:ERROR:none" ] && grep -q 'CLOSE refused: the campaign ran with FV_NO_CLASSIFY=1' "$D108/c108-plain-$$/history.jsonl" "$D108/task.out" 2>/dev/null \
+cj="$D108/c108-reduced-$$/closure.json"; cm="$D108/c108-reduced-$$/closure.md"
+if [ "${r108[0]}" = "3:ERROR:none" ] && grep -q 'CLOSE refused: reduced coverage (classification skipped: FV_NO_CLASSIFY=1' "$D108/c108-plain-$$/history.jsonl" \
+   && [ "${r108[2]}" = "3:ERROR:none" ] && grep -q 'CLOSE refused: reduced coverage (class-guided retention incomplete: the generation stopped' "$D108/c108-guard-$$/history.jsonl" \
+   && [ "${r108[3]}" = "3:ERROR:none" ] && grep -q 'CLOSE refused: the campaign ran with test hooks FV_TEST_HOOK_REPLAY_STATUS' "$D108/c108-hook-$$/history.jsonl" \
    && [ "${r108[1]%%:*}" = 0 ] && [ "$(jq -r 'keys_unsorted[1]' "$cj" 2>/dev/null)" = reduced_coverage ] \
-   && jq -e '.reduced_coverage.reason == "c108: a control"' "$cj" > /dev/null && sed -n 3p "$D108/c108-reduced-$$/closure.md" | grep -q '^REDUCED COVERAGE: c108: a control'; then
-  echo "c108_no_classify_close OK CLOSE of an FV_NO_CLASSIFY=1 campaign: refused (ERROR, no closure); with --reduced-coverage: closed, reason recorded second in closure.json (after the signer) and at the head of closure.md"
+   && jq -e '.reduced_coverage.reason == "c108: a control" and (.reduced_coverage.fuzz_record | startswith("classification skipped: FV_NO_CLASSIFY=1"))' "$cj" > /dev/null \
+   && sed -n 3p "$cm" | grep -q '^REDUCED COVERAGE: c108: a control' \
+   && sed -n '/^## Edge-case coverage/,/^## /p' "$cm" | grep -q '^- not classified: FV_NO_CLASSIFY=1' \
+   && ! sed -n '/^## Edge-case coverage/,/^## /p' "$cm" | grep -q 'distinct corpus inputs'; then
+  echo "c108_no_classify_close OK CLOSE refused (ERROR, no closure) on the record: no classification, the retention time guard, a test hook (even with --reduced-coverage); with --reduced-coverage: closed, reason recorded second in closure.json (after the signer) and at the head of closure.md, whose coverage section says \"not classified\""
 else
-  echo "c108_no_classify_close WRONG plain=${r108[0]} reduced=${r108[1]} keys=$(jq -c 'keys_unsorted[0:3]' "$cj" 2>/dev/null) md3=[$(sed -n 3p "$D108/c108-reduced-$$/closure.md" 2>/dev/null | cut -c1-80)] [$(tail -2 "$D108/task.out" | tr '\n' ' ' | cut -c1-160)]"; fails=1
+  echo "c108_no_classify_close WRONG plain=${r108[0]} reduced=${r108[1]} guard=${r108[2]} hook=${r108[3]} keys=$(jq -c 'keys_unsorted[0:3]' "$cj" 2>/dev/null) md3=[$(sed -n 3p "$cm" 2>/dev/null | cut -c1-80)] cov=[$(sed -n '/^## Edge-case coverage/,/^## /p' "$cm" 2>/dev/null | sed -n 2p | cut -c1-90)] [$(tail -2 "$D108/task.out" | tr '\n' ' ' | cut -c1-160)]"; fails=1
 fi
 
 D65="${OUT:?}/c65"; rm -rf "${D65:?}"; mkdir -p "$D65"
@@ -515,7 +572,7 @@ else
   jb="$D65/b/run/fuzz.json"
   gb=$(jq -r '.remote.requires.glibc // ""' "$jb" 2>/dev/null); xb=$(jq -r '.remote.requires.glibcxx // "?"' "$jb" 2>/dev/null)
   [ $rb -eq 0 ] && [ -n "$gb" ] && [ "$(printf '%s\n2.39\n' "$gb" | sort -V | tail -1)" = 2.39 ] && [ -z "$xb" ] \
-    && jq -e --arg s "$FV_BUILD_SYSROOT_SHA256" '.verdict == "PASS" and .remote.build_sysroot_sha256 == $s' "$jb" > /dev/null \
+    && classes_ok "$jb" && jq -e --arg s "$FV_BUILD_SYSROOT_SHA256" '.verdict == "PASS" and .remote.build_sysroot_sha256 == $s' "$jb" > /dev/null \
     || r65+="(b) exit=$rb requires=$gb/$xb [$(jq -r .detail "$jb" 2>/dev/null | cut -c1-100)] "
   t65 c "$ROOT/tests/harness_fv_controls/variants/c65_new_glibc" "${TGT[@]}"; rc_=$?
   [ $rc_ -eq 3 ] && jq -e '.detail | test("build failed")' "$D65/c/run/fuzz.json" > /dev/null || r65+="(c) exit=$rc_ [$(jq -r .detail "$D65/c/run/fuzz.json" 2>/dev/null | cut -c1-100)] "
@@ -531,8 +588,12 @@ else
   t65 f "$ROOT/fixtures/conservation_cpp/impl" PATH="$D65/f/shim:$PATH" "${TGT[@]}"; rf=$?   # objdump fails: not "needs nothing"
   [ $rf -eq 3 ] && jq -e '.detail | test("objdump -T could not read")' "$D65/f/run/fuzz.json" > /dev/null \
     && [ ! -e "$D65/f/run/remote-local" ] || r65+="(f) exit=$rf [$(jq -r .detail "$D65/f/run/fuzz.json" 2>/dev/null | cut -c1-100)] "
+  mkdir -p "$D65/g/shim"; printf '#!/bin/sh\nexit 0\n' > "$D65/g/shim/objdump"; chmod +x "$D65/g/shim/objdump"
+  t65 g "$ROOT/fixtures/conservation_cpp/impl" PATH="$D65/g/shim:$PATH" "${TGT[@]}"; rg=$?   # objdump reads nothing: no GLIBC_ version
+  [ $rg -eq 3 ] && jq -e '.detail | test("no GLIBC_ symbol version found")' "$D65/g/run/fuzz.json" > /dev/null \
+    && [ ! -e "$D65/g/run/remote-local" ] || r65+="(g) exit=$rg [$(jq -r .detail "$D65/g/run/fuzz.json" 2>/dev/null | cut -c1-100)] "
   if [ -z "$r65" ]; then
-    echo "c65_bundle_target OK (a) glibc 2.42 caller, host build, 2.39 worker: BLOCKED before shipping [$(jq -r .detail "$ja" | cut -c1-90)]; (b) with the sysroot: PASS, bundle needs glibc $gb and no GLIBCXX; (c) the 2.42 caller with the sysroot: does not build; (d) ssh worker without a target: ERROR before ssh; (e) a target that is not a version, (f) objdump failing: ERROR before shipping"
+    echo "c65_bundle_target OK (a) glibc 2.42 caller, host build, 2.39 worker: BLOCKED before shipping [$(jq -r .detail "$ja" | cut -c1-90)]; (b) with the sysroot: PASS, bundle needs glibc $gb and no GLIBCXX; (c) the 2.42 caller with the sysroot: does not build; (d) ssh worker without a target: ERROR before ssh; (e) a target that is not a version, (f) objdump failing, (g) no GLIBC_ symbol version in the bundle: ERROR before shipping"
   else
     echo "c65_bundle_target WRONG $r65"; fails=1
   fi
