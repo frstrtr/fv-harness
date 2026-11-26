@@ -72,9 +72,11 @@ The pipeline:
 - **Faster suite:** the C++ fixture's retention budget is 2000 executions (`fixtures/conservation_cpp/fuzz/fv.toml`);
   the controls whose subject is retention set 200000. The control suite's C++ part takes about 27 minutes
   on a 4-core host instead of 2.5 hours.
-- **Upgrading from v0.3.1:** vendored files are unchanged. A campaign run with `FV_NO_CLASSIFY=1` needs
-  `formal_task.py close --reduced-coverage REASON`. Rust: builds are offline, so the crates must already be
-  in cargo's cache: `cargo fetch` in the fuzz directory (with the network) before the first run.
+- **Upgrading from v0.3.1:** vendored files are unchanged. A campaign without a complete classification and
+  retention pass (`FV_NO_CLASSIFY=1`, `retain_runs = 0`, the retention time guard, a classification error)
+  closes only with `formal_task.py close --reduced-coverage REASON`. Rust and EVM: builds are offline, so the
+  crates must already be in cargo's cache: `cargo fetch --locked` in the fuzz directory (with the network)
+  before the first run.
 
 ## Changes in v0.3.1
 
