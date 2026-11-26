@@ -538,7 +538,7 @@ echo '{"verdict": "PASS", "stages": {}}' > "$D108/audit/verdict.json"
 mkdir -p "$D108/hooked"   # c1's clean record with a test hook added
 jq '.test_hooks = ["FV_TEST_HOOK_REPLAY_STATUS"]' "$OUT/c1_fuzz/run/fuzz.json" > "$D108/hooked/fuzz.json" 2>/dev/null
 V108="$OUT/c108_fuzzdir"; rm -rf "$V108"; mkdir -p "$V108"; cp -r "$CPP"/. "$V108"/; sed -i 's/^retain_runs = .*/retain_runs = 10/' "$V108/fv.toml"
-CMAKE_DIR="$V108" campaign c108_small --runs 200; rcs=$?
+CMAKE_DIR="$V108" campaign c108_small --runs 200 --impl-dir "$ROOT/fixtures/conservation_cpp/impl"; rcs=$?
 FT=(python3 -I "$ROOT/scripts/formal_task.py"); T108="c108-init-$$"
 "${FT[@]}" init "$T108" --project "$D108/proj" --lock "$LOCK" --cmake-dir "$CPP" --target diff_transfer --fuzz-runs 1000 > "$D108/task.out" 2>&1
 mk108() { # mk108 NAME RUN_DIR: a task in CLOSE whose campaign record is RUN_DIR's
