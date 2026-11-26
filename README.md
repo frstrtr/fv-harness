@@ -43,9 +43,12 @@ The pipeline:
 ## Changes in v0.3.2
 
 - **Offline by construction.** Every build (CMake and lake, cargo, clang, javac, solc) and every process
-  that runs the implementation under test (corpus replay, campaign, merge, retention, classification)
-  runs in a network namespace with only `lo` (`capped_off` in `scripts/lib.sh`). The TRON-TVM and TON-TVM
-  drivers already ran in their own. The Rust build also sets `CARGO_NET_OFFLINE`.
+  on the gate host that runs the implementation under test (corpus replay, the single campaign and
+  `--jobs` workers, merge, retention, classification) runs in a network namespace with only `lo`
+  (`capped_off` in `scripts/lib.sh`); the TRON-TVM driver already ran in its own. Not covered: bundle
+  workers (`--remote local:K` and `ssh:NAME:K`), which run `fv_worker.sh` with the host's network (their
+  guards may probe a chain node). The Rust build also sets `CARGO_NET_OFFLINE`, so run `cargo fetch` once
+  in the example's fuzz directory before the first campaign (`docs/LANGUAGES.md`).
 - **Retention never hides a failure.**
   - The verdict binary also replays any input on which the retention generation itself stopped (a crash,
     timeout or OOM artifact): a finding there is a FAIL (c89).
@@ -61,7 +64,8 @@ The pipeline:
   the controls whose subject is retention set 200000. The control suite's C++ part takes about 27 minutes
   on a 4-core host instead of 2.5 hours.
 - **Upgrading from v0.3.1:** vendored files are unchanged. A campaign run with `FV_NO_CLASSIFY=1` needs
-  `formal_task.py close --reduced-coverage REASON`.
+  `formal_task.py close --reduced-coverage REASON`. Rust: builds are offline, so the crates must already be
+  in cargo's cache: `cargo fetch` in the fuzz directory (with the network) before the first run.
 
 ## Changes in v0.3.1
 

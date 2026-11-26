@@ -68,6 +68,9 @@ echo "b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55  $R/dl/ru
 chmod +x "$R/dl/rustup-init"
 "$R/dl/rustup-init" -y --no-modify-path --profile minimal --default-toolchain nightly-2026-11-10
 "$CARGO_HOME/bin/cargo" install cargo-fuzz --version 0.13.2 --locked
+# Builds run offline (CARGO_NET_OFFLINE, in a network namespace): fetch each fuzz project's crates once,
+# with the network, at the versions its Cargo.lock pins.
+(cd examples/risk-limit-rust/fuzz && "$CARGO_HOME/bin/cargo" fetch --locked)
 ```
 
 | Component | Pin |
@@ -303,7 +306,8 @@ User-local, offline at run time.
   features = ["std"]`, so there are no C crypto libraries. Its tree is pinned in the example's
   `Cargo.lock`: 130 packages for linux x86_64, all under permissive licences (MIT, Apache-2.0,
   BSD, CC0, Zlib).
-- **cargo**: it runs offline. A `Cargo.lock` that changes during the build is ERROR.
+- **cargo**: it runs offline (fetch the crates first: `cargo fetch --locked` in the example's `fuzz/`
+  directory). A `Cargo.lock` that changes during the build is ERROR.
 
 ```sh
 mkdir -p "$FV_ROOT/evm/dl" && cd "$FV_ROOT/evm/dl"

@@ -636,11 +636,16 @@ keep_reproducers() { # a failing input joins the persisted corpus, so replay fai
   for f in "$RUN"/artifacts/*; do [ -f "$f" ] && cp "$f" "$corpus/"; done
 }
 
-# Every process that runs the implementation under test runs offline: a wrapper that enters its own network
-# namespace (the TRON-TVM and TON-TVM drivers) runs as it is, anything else inside capped_off.
-own_netns() { [ "$(head -c 2 "$1" 2>/dev/null)" = "#!" ] && grep -q -- '--unshare-net' "$1"; }
-CAP_BIN=capped_off; own_netns "$BIN" && CAP_BIN=capped
-CAP_CLS=capped_off; [ -n "$BIN_CLS" ] && own_netns "$BIN_CLS" && CAP_CLS=capped
+# Every process that runs the implementation under test runs offline: inside capped_off, except for a
+# language whose driver wrapper enters its own network namespace (TRON-TVM; nested namespaces are not
+# allowed on every host), whose wrapper must then say so, else ERROR.
+CAP_BIN=capped_off; CAP_CLS=capped_off
+if [ "$lang" = tron-tvm ]; then
+  for w in "$BIN" ${BIN_CLS:+"$BIN_CLS"}; do
+    grep -q -- '--unshare-net' "$w" 2>/dev/null || verdict 3 ERROR "the $lang wrapper $w does not enter its own network namespace"
+  done
+  CAP_BIN=capped; [ -n "$BIN_CLS" ] && CAP_CLS=capped
+fi
 # 3. Regression replay of the persisted corpus.
 $CAP_BIN "$BIN" "${LIMITS[@]}" -runs=0 -artifact_prefix="$RUN/artifacts/" "$corpus" > "$RUN/replay.log" 2>&1
 replay_rc=$?
