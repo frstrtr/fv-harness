@@ -40,6 +40,29 @@ The pipeline:
   harness's first runs: on its own fixture, on the tools it builds on, and on its first production
   specification (`docs/CASE-STUDIES.md`).
 
+## Changes in v0.3.2
+
+- **Offline by construction.** Every build (CMake and lake, cargo, clang, javac, solc) and every process
+  that runs the implementation under test (corpus replay, campaign, merge, retention, classification)
+  runs in a network namespace with only `lo` (`capped_off` in `scripts/lib.sh`). The TRON-TVM and TON-TVM
+  drivers already ran in their own. The Rust build also sets `CARGO_NET_OFFLINE`.
+- **Retention never hides a failure.**
+  - The verdict binary also replays any input on which the retention generation itself stopped (a crash,
+    timeout or OOM artifact): a finding there is a FAIL (c89).
+  - Every retention error (a stopped generation, the time guard, a classify build without retention) is
+    written to `classes.error`, so the classification is never shown as complete (c90).
+  - `FV_NO_CLASSIFY=1` is recorded in `fuzz.json`, and CLOSE refuses such a run unless given
+    `--reduced-coverage REASON`, which the closure records first (c108).
+  - The TRON-TVM driver checks run again after the retention replay and after the merge (c109, through
+    the test hook `FV_TEST_HOOK_REPLAY_STATUS`; any `FV_TEST_HOOK_*` is recorded and CLOSE refuses the run).
+- **Worker gate:** an `objdump` failure, a bundle with no `GLIBC_` symbol version and a worker target that is
+  not a version are each ERROR before shipping (c65 (e), (f)).
+- **Faster suite:** the C++ fixture's retention budget is 2000 executions (`fixtures/conservation_cpp/fuzz/fv.toml`);
+  the controls whose subject is retention set 200000. The control suite's C++ part takes about 27 minutes
+  on a 4-core host instead of 2.5 hours.
+- **Upgrading from v0.3.1:** vendored files are unchanged. A campaign run with `FV_NO_CLASSIFY=1` needs
+  `formal_task.py close --reduced-coverage REASON`.
+
 ## Changes in v0.3.1
 
 - **Edge-case classification in every language.**

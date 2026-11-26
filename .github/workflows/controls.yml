@@ -15,12 +15,11 @@ permissions:
 jobs:
   controls:
     runs-on: ubuntu-24.04
-    timeout-minutes: 300   # v0.3.1: every C++ campaign that passes now runs the class-guided retention
-                           # pass (200000 executions, about 7-8 minutes each on a 4-core host) and the
-                           # C++ controls run about 20 such campaigns; the chain-node controls wait
-                           # about 11 and 13 minutes by design. In the evidence run the C++ controls
-                           # alone took about 2.5 hours on the gate host; before v0.3.1 the whole job
-                           # took about 20 minutes here.
+    timeout-minutes: 120   # v0.3.2: the C++ fixture's retention budget is 2000 executions (c73, c89 and
+                           # c90 keep 200000), so the C++ controls take about 27 minutes on a 4-core gate
+                           # host instead of 2.5 hours; with the install, the gate controls and the
+                           # risk-limit example, about 45-60 minutes on a hosted runner (v0.3.1 took
+                           # 3 h 8 min here)
     defaults:
       run:
         shell: bash
