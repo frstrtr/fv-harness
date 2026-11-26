@@ -22,9 +22,9 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 X="${1:?}"; rm -rf "${X:?}"; mkdir -p "$X"
 cp -r "$ROOT/tests/harness_fv_controls/bytes_abi" "$X/src"; rm -rf "$X/src/lean/.lake"
 B="$X/build"
-capped cmake -S "$X/src" -B "$B" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DFV_HARNESS_DIR="$ROOT" \
+capped_off cmake -S "$X/src" -B "$B" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DFV_HARNESS_DIR="$ROOT" \
   -DLEAN_PROJECT="$X/src/lean" -DLEAN_BIN_DIR="$LEAN_TC/bin" > "$X/cmake.log" 2>&1 \
-  && capped cmake --build "$B" -j "$FV_JOBS" >> "$X/cmake.log" 2>&1 \
+  && capped_off cmake --build "$B" -j "$FV_JOBS" >> "$X/cmake.log" 2>&1 \
   || { echo "c50_bytes_abi WRONG build failed (see $X/cmake.log): $(grep -m2 -i error "$X/cmake.log" | tr '\n' ' ' | cut -c1-200)"; exit 1; }
 T="$B/bytes_abi_test"; export ASAN_OPTIONS=detect_leaks=0   # LSan is blind to Lean's heap (mimalloc); see (a)
 growth() { grep -oE 'rss_growth_kb=-?[0-9]+' "$1" | grep -oE -- '-?[0-9]+$'; }
@@ -45,7 +45,7 @@ if s.count(old) != 1:
     sys.exit("c50 setup: wrapper text not found: " + old)
 open(p, "w").write(s.replace(old, new))
 PY
-  touch "$B/bytes_oracle_stub.c"; capped cmake --build "$B" --target bytes_abi_test -j "$FV_JOBS" >> "$X/cmake.log" 2>&1
+  touch "$B/bytes_oracle_stub.c"; capped_off cmake --build "$B" --target bytes_abi_test -j "$FV_JOBS" >> "$X/cmake.log" 2>&1
   capped "$T" "$4" "$5" 8192 > "$X/$1.out" 2>&1
 }
 variant red-leak '  if (m) memcpy(out, lean_sarray_cptr(r), m);\n  lean_dec(r);\n  return 0;' \
@@ -53,7 +53,7 @@ variant red-leak '  if (m) memcpy(out, lean_sarray_cptr(r), m);\n  lean_dec(r);\
 variant red-rc '  lean_object* r = fv_rev(a);  /* the function owns and releases a */' \
                '  lean_object* r = fv_rev(a);  lean_dec(a);' rc 1; rr=$?
 cp "$X/stub.orig.c" "$B/bytes_oracle_stub.c"; touch "$B/bytes_oracle_stub.c"
-capped cmake --build "$B" -j "$FV_JOBS" >> "$X/cmake.log" 2>&1
+capped_off cmake --build "$B" -j "$FV_JOBS" >> "$X/cmake.log" 2>&1
 SO=$(find "$B" -maxdepth 2 -name 'libbytes_oracle.so' | head -1)
 PYB="${FV_PY:-$FV_ROOT/py/venv/bin/python}"; [ -x "$PYB" ] || PYB=python3
 pyp() { env -u ASAN_OPTIONS "$PYB" -I "$ROOT/tests/harness_fv_controls/bytes_abi/py_path.py" "$SO" "$ROOT/fuzz/python" "$1" > "$X/py-$1.out" 2>&1; }

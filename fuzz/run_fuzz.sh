@@ -341,13 +341,13 @@ BIN_CLS=""; CLS_FILE=()
 case "$lang" in
   cpp)
     [ -n "$impl" ] && cfg+=(-DIMPL_DIR="$(cd "$impl" && pwd)")
-    if ! { capped cmake "${cfg[@]}" && capped cmake --build "$RUN/build" --target "$target" -j "$FV_JOBS"; } >> "$LOG" 2>&1; then
+    if ! { capped_off cmake "${cfg[@]}" && capped_off cmake --build "$RUN/build" --target "$target" -j "$FV_JOBS"; } >> "$LOG" 2>&1; then
       verdict 3 ERROR "fuzzer build failed (see $LOG)"
     fi
     BIN="$RUN/build/$target"
     # The labels-only classify build is optional: without it (e.g. an older vendored
     # LeanOracle.cmake) the run is simply not classified. It never affects the verdict.
-    if capped cmake --build "$RUN/build" --target "${target}_classify" -j "$FV_JOBS" >> "$RUN/build-classify.log" 2>&1 \
+    if capped_off cmake --build "$RUN/build" --target "${target}_classify" -j "$FV_JOBS" >> "$RUN/build-classify.log" 2>&1 \
        && [ -x "$RUN/build/${target}_classify" ]; then
       BIN_CLS="$RUN/build/${target}_classify"
     fi
@@ -386,7 +386,7 @@ case "$lang" in
       [ -x "$solc" ] || verdict 3 ERROR "solc not installed at $solc (docs/LANGUAGES.md)"
       ssha=$(sha256sum < "$solc" | cut -d' ' -f1)
       [ "$ssha" = "$FV_SOLC_SHA256" ] || verdict 3 ERROR "solc at $solc is not the pinned build: sha256 $ssha, pinned $FV_SOLC_SHA256"
-      if ! EVM_JSON=$(capped python3 -I "$HERE/evm/compile.py" --solc "$solc" --src-dir "$impl_dir" \
+      if ! EVM_JSON=$(capped_off python3 -I "$HERE/evm/compile.py" --solc "$solc" --src-dir "$impl_dir" \
                       --fv-toml "$cmake_dir/fv.toml" --out "$RUN/evm" 2> "$RUN/evm-compile.err"); then
         EVM_JSON=null; verdict 3 ERROR "contract compilation failed: $(tail -1 "$RUN/evm-compile.err" | cut -c1-300)"
       fi
@@ -398,7 +398,7 @@ case "$lang" in
             FV_EVM_SPEC="$(jq -r .settings.evm_version <<< "$EVM_JSON")" CARGO_NET_OFFLINE=true)
     fi
     cargo_build() { # cargo_build TARGET_DIR EXTRA_RUSTFLAGS
-      (cd "$cmake_dir" && capped env RUSTUP_HOME="$rh/rustup" CARGO_HOME="$rh/cargo" PATH="$rh/cargo/bin:$PATH" \
+      (cd "$cmake_dir" && capped_off env RUSTUP_HOME="$rh/rustup" CARGO_HOME="$rh/cargo" PATH="$rh/cargo/bin:$PATH" CARGO_NET_OFFLINE=true \
          FV_ORACLE_LIB_DIR="$RUN/build" FV_ORACLE_LIB="${target}_oracle" FV_IMPL_DIR="$impl_dir" \
          FV_DIFF_RS="$HERE/rust/fv_diff.rs" "${xenv[@]}" RUSTFLAGS="-C overflow-checks=on -C debug-assertions=on$2" \
          cargo fuzz build -a --fuzz-dir "$cmake_dir" --target-dir "$1" "$target")
@@ -406,7 +406,7 @@ case "$lang" in
     TSRC_SHA=$(sha256sum < "$tsrc" | cut -d' ' -f1)  # the fv_class! sources as built (classify_report.py checks them)
     CLS_FILE=("--classes-file" "$tsrc" "--classes-file-sha256" "$TSRC_SHA")
     lock0=$(sha256sum < "$cmake_dir/Cargo.lock" 2>/dev/null)
-    if ! { capped cmake "${cfg[@]}" && capped cmake --build "$RUN/build" --target "${target}_oracle" -j "$FV_JOBS" \
+    if ! { capped_off cmake "${cfg[@]}" && capped_off cmake --build "$RUN/build" --target "${target}_oracle" -j "$FV_JOBS" \
            && cargo_build "$RUN/cargo-target" ""; } >> "$LOG" 2>&1; then
       verdict 3 ERROR "fuzzer build failed (see $LOG)"
     fi
@@ -432,7 +432,7 @@ case "$lang" in
     if grep -qE '^[^#]*(def[[:space:]]+TestOneInput|atheris\.(Setup|Fuzz))' "$bnd"; then
       verdict 3 ERROR "the Python binding must not define TestOneInput or call atheris.Setup/Fuzz (fuzz/python/fv_diff.py drives the fuzzer)"
     fi
-    if ! { capped cmake "${cfg[@]}" && capped cmake --build "$RUN/build" --target "${target}_oracle" -j "$FV_JOBS"; } >> "$LOG" 2>&1; then
+    if ! { capped_off cmake "${cfg[@]}" && capped_off cmake --build "$RUN/build" --target "${target}_oracle" -j "$FV_JOBS"; } >> "$LOG" 2>&1; then
       verdict 3 ERROR "oracle build failed (see $LOG)"
     fi
     so="$RUN/build/lib${target}_oracle.so"; [ -f "$so" ] || verdict 3 ERROR "no oracle library $so"
@@ -482,7 +482,7 @@ case "$lang" in
       verdict 3 ERROR "the Python binding must not define TestOneInput or call atheris.Setup/Fuzz (fuzz/python/fv_diff.py drives the fuzzer)"
     fi
     mkdir -p "$RUN/tron-tvm"
-    if ! EVM_JSON=$(capped python3 -I "$HERE/evm/compile.py" --section tron-tvm --solc "$solc" --src-dir "$impl_dir" \
+    if ! EVM_JSON=$(capped_off python3 -I "$HERE/evm/compile.py" --section tron-tvm --solc "$solc" --src-dir "$impl_dir" \
                     --fv-toml "$cmake_dir/fv.toml" --out "$RUN/tron-tvm" 2> "$RUN/tron-tvm-compile.err"); then
       EVM_JSON=null; verdict 3 ERROR "contract compilation failed: $(tail -1 "$RUN/tron-tvm-compile.err" | cut -c1-300)"
     fi
@@ -519,7 +519,7 @@ case "$lang" in
     [ "$jdksha" = "$FV_TRON_TVM_JDK_TREE_SHA256" ] \
       || verdict 3 ERROR "the JDK tree at $jdk (sha256 $jdksha) is not the pinned one ($FV_TRON_TVM_JDK_TREE_SHA256)"
     mkdir -p "$RUN/tron-tvm/drv"
-    if ! capped "$jdk/bin/javac" -nowarn -cp "$cp" -d "$RUN/tron-tvm/drv" "$HERE/tron-tvm/FvTronTvmDriver.java" > "$RUN/tron-tvm/javac.log" 2>&1; then
+    if ! capped_off "$jdk/bin/javac" -nowarn -cp "$cp" -d "$RUN/tron-tvm/drv" "$HERE/tron-tvm/FvTronTvmDriver.java" > "$RUN/tron-tvm/javac.log" 2>&1; then
       verdict 3 ERROR "TRON-TVM driver build failed (see $RUN/tron-tvm/javac.log)"
     fi
     prof=$(python3 -I -c 'import sys, tomllib
@@ -543,7 +543,7 @@ except OSError: print("")' "$cmake_dir/fv.toml")
         chain_profile: {name: $prof, network: $pmeta.network, source: $pmeta.source, fetched: $pmeta.fetched, sha256: $psha},
         solc_sha256: $s} + .' <<< "$EVM_JSON")
     : > "$RUN/tron-tvm/status.jsonl"; : > "$RUN/tron-tvm/coverage.pcs"   # this run's own observations only
-    if ! { capped cmake "${cfg[@]}" && capped cmake --build "$RUN/build" --target "${target}_oracle" -j "$FV_JOBS"; } >> "$LOG" 2>&1; then
+    if ! { capped_off cmake "${cfg[@]}" && capped_off cmake --build "$RUN/build" --target "${target}_oracle" -j "$FV_JOBS"; } >> "$LOG" 2>&1; then
       verdict 3 ERROR "oracle build failed (see $LOG)"
     fi
     so="$RUN/build/lib${target}_oracle.so"; [ -f "$so" ] || verdict 3 ERROR "no oracle library $so"
@@ -588,14 +588,14 @@ classify() { # classify corpus|findings — labels only; sets CLASSES_JSON, neve
   if [ "$1" = corpus ]; then
     src=("$corpus"); [ "$merge" -eq 1 ] || src+=("$RUN/new_corpus")
     [ -d "$C/retained" ] && src+=("$C/retained")  # class-guided inputs, each compared by the verdict binary (4b)
-    FV_CLASSIFY="$C/log.jsonl" FV_CLASSIFY_TIME_IMPL=1 capped "$BIN_CLS" "${LIMITS[@]}" -runs=0 "${src[@]}" > "$C/replay.log" 2>&1
+    FV_CLASSIFY="$C/log.jsonl" FV_CLASSIFY_TIME_IMPL=1 $CAP_CLS "$BIN_CLS" "${LIMITS[@]}" -runs=0 "${src[@]}" > "$C/replay.log" 2>&1
     rrc=$?  # a replay that stopped (a describe() or predicate that raised or panicked) classified only part of the corpus
   else
     for f in "$RUN"/artifacts/*; do [ -f "$f" ] && fnd+=("$f"); done
     [ ${#fnd[@]} -gt 0 ] || return 0
     fnd=(--findings "${fnd[@]}")
   fi
-  if ! CLASSES_JSON=$(capped python3 -I "$HERE/classify_report.py" --log "$C/log.jsonl" --bin "$BIN_CLS" --out "$C" \
+  if ! CLASSES_JSON=$($CAP_CLS python3 -I "$HERE/classify_report.py" --log "$C/log.jsonl" --bin "$BIN_CLS" --out "$C" \
        --corpus "${src[@]}" "${hdr[@]}" "${CLS_FILE[@]}" --retention "$RETAIN_JSON" "${fnd[@]}" 2>> "$C/report.log") || [ -z "$CLASSES_JSON" ]; then
     CLASSES_JSON='{"labels_only": true, "error": "classification failed (see classify/report.log)"}'
   fi
@@ -636,8 +636,13 @@ keep_reproducers() { # a failing input joins the persisted corpus, so replay fai
   for f in "$RUN"/artifacts/*; do [ -f "$f" ] && cp "$f" "$corpus/"; done
 }
 
+# Every process that runs the implementation under test runs offline: a wrapper that enters its own network
+# namespace (the TRON-TVM and TON-TVM drivers) runs as it is, anything else inside capped_off.
+own_netns() { [ "$(head -c 2 "$1" 2>/dev/null)" = "#!" ] && grep -q -- '--unshare-net' "$1"; }
+CAP_BIN=capped_off; own_netns "$BIN" && CAP_BIN=capped
+CAP_CLS=capped_off; [ -n "$BIN_CLS" ] && own_netns "$BIN_CLS" && CAP_CLS=capped
 # 3. Regression replay of the persisted corpus.
-capped "$BIN" "${LIMITS[@]}" -runs=0 -artifact_prefix="$RUN/artifacts/" "$corpus" > "$RUN/replay.log" 2>&1
+$CAP_BIN "$BIN" "${LIMITS[@]}" -runs=0 -artifact_prefix="$RUN/artifacts/" "$corpus" > "$RUN/replay.log" 2>&1
 replay_rc=$?
 classify_line_in "$RUN/replay.log" && verdict 3 ERROR "the replay ran a classify build, which never compares"
 executor_verdict() { # executor_verdict LOG: an executor failure is ERROR / BLOCKED, never a finding
@@ -800,7 +805,7 @@ fi
 mkdir -p "$RUN/workers"; : > "$RUN/batches.tsv"; extra=$(replay_units "$RUN/new_corpus" "$corpus")
 if [ "$jobs" -eq 1 ] && [ -z "$remote" ]; then
   limit=(); [ -n "$secs" ] && limit+=(-max_total_time="$secs"); [ -n "$runs" ] && limit+=(-runs="$(( runs + extra ))")
-  capped "$BIN" "${limit[@]}" "${LIMITS[@]}" "${LENS[@]}" -print_final_stats=1 -artifact_prefix="$RUN/artifacts/" \
+  $CAP_BIN "$BIN" "${limit[@]}" "${LIMITS[@]}" "${LENS[@]}" -print_final_stats=1 -artifact_prefix="$RUN/artifacts/" \
     "$RUN/new_corpus" "$corpus" > "$RUN/campaign.log" 2>&1
   e=$?; printf '0\t0\t0\t-\tdone\t%s\t%s\n' "$e" "$RUN/campaign.log" >> "$RUN/batches.tsv"
   single=1
@@ -808,7 +813,7 @@ else
   single=0; wlimit=(); [ -n "$secs" ] && wlimit+=(-max_total_time="$secs"); [ -n "$per" ] && wlimit+=(-runs="$(( per + extra ))")
   pids=()
   for ((w = 0; w < jobs; w++)); do
-    capped env FV_FUZZ_WORKER="$w" "$BIN" "${wlimit[@]}" "${LIMITS[@]}" "${LENS[@]}" -seed=$((seed0 + w)) -print_final_stats=1 \
+    $CAP_BIN env FV_FUZZ_WORKER="$w" "$BIN" "${wlimit[@]}" "${LIMITS[@]}" "${LENS[@]}" -seed=$((seed0 + w)) -print_final_stats=1 \
       -artifact_prefix="$RUN/artifacts/w$w-" "$RUN/new_corpus" "$corpus" > "$RUN/workers/w$w.log" 2>&1 &
     pids+=($!)
   done
@@ -935,7 +940,7 @@ retention() {
   mkdir -p "$C"; rm -rf "$K" "$W"; mkdir -p "$K" "$W"
   [ -d "$RUN/new_corpus" ] && src+=("$RUN/new_corpus")
   # The first directory receives libFuzzer's own new units (W, discarded); -reload=0: no timed re-reads.
-  FV_CLASSIFY=/dev/null FV_CLASSIFY_RETAIN="$K" capped "$BIN_CLS" "${LIMITS[@]}" "${LENS[@]}" -seed="$RETAIN_SEED" \
+  FV_CLASSIFY=/dev/null FV_CLASSIFY_RETAIN="$K" $CAP_CLS "$BIN_CLS" "${LIMITS[@]}" "${LENS[@]}" -seed="$RETAIN_SEED" \
     -runs="$RETAIN_RUNS" -use_value_profile=1 -reload=0 -max_total_time="${FV_RETAIN_GUARD_S:-3600}" \
     -artifact_prefix="$C/retain-artifact-" "$W" "${src[@]}" > "$C/retain.log" 2>&1
   rc=$?
@@ -965,7 +970,7 @@ retention() {
   n=$(find "$A" -maxdepth 1 -type f | wc -l)
   [ "$n" -gt 0 ] || return 0
   # The verdict binary compares every retained input, and every input the generation stopped on.
-  capped "$BIN" "${LIMITS[@]}" -runs=0 -artifact_prefix="$RUN/artifacts/retain-" "$A" > "$RUN/retain-replay.log" 2>&1
+  $CAP_BIN "$BIN" "${LIMITS[@]}" -runs=0 -artifact_prefix="$RUN/artifacts/retain-" "$A" > "$RUN/retain-replay.log" 2>&1
   rr=$?
   classify_line_in "$RUN/retain-replay.log" && verdict 3 ERROR "the retention replay ran a classify build, which never compares"
   RETAIN_JSON=$(jq -c --argjson n "$n" '.replayed = $n' <<< "$RETAIN_JSON")
@@ -990,7 +995,7 @@ tron_tvm_observed   # the retention replay's drivers too
 if [ "$merge" -eq 1 ]; then
   a0=$(find "$RUN/artifacts" -maxdepth 1 -type f ! -name '*slow-unit-*' | wc -l)
   nin=$(find "$corpus" "$RUN/new_corpus" -maxdepth 1 -type f | wc -l)
-  capped "$BIN" "${LIMITS[@]}" -artifact_prefix="$RUN/artifacts/merge-" -merge=1 "$corpus" "$RUN/new_corpus" > "$RUN/merge.log" 2>&1
+  $CAP_BIN "$BIN" "${LIMITS[@]}" -artifact_prefix="$RUN/artifacts/merge-" -merge=1 "$corpus" "$RUN/new_corpus" > "$RUN/merge.log" 2>&1
   mrc=$?
   classify_line_in "$RUN/merge.log" && verdict 3 ERROR "the merge ran a classify build"
   a1=$(find "$RUN/artifacts" -maxdepth 1 -type f ! -name '*slow-unit-*' | wc -l)
