@@ -42,27 +42,37 @@ The pipeline:
 
 ## Changes in v0.3.3
 
-- **The gate audits the locked files, never the working tree after the check.**
-  - Before v0.3.3, `verify_proof.sh` checked the trusted files against the signed lock, ran the lint, and
-    only then copied the trusted files from the project into its run directory, without hashing the copies.
-    A writer during that interval could change the spec the builds and comparator then used.
-  - Now the manifest is read once, into the run. Right after the check, the locked files are copied into a
-    content-addressed store (`$FV_ROOT/lock-store/<manifest sha256>`, or `FV_LOCK_STORE`), their files made
-    read-only, and verified against the manifest; a copy that differs is BLOCKED.
-  - Every staged tree (trusted, full, native) comes from that store, and is re-hashed against the lock just
-    before the builds and again at the start of the audit, else BLOCKED.
-  - New stages: `held_out` and `staged`. Two test hooks (`FV_TEST_HOOK_GATE_EDIT`,
-    `FV_TEST_HOOK_GATE_EDIT_STAGED`) simulate the writer for control c115; any hook set is recorded in
-    `verdict.json` (`test_hooks`), and CLOSE refuses the run.
+- **The gate audits the locked files, never what the working tree holds later.**
+  - Before v0.3.3, `verify_proof.sh` checked the trusted files against the signed lock and only then, after the lint,
+    copied them from the project into its run directory without hashing the copies; it also checked the lock file
+    in place, so a lock swapped during the check, or a run directory prepared beforehand, could feed it other content.
+  - Now the run directory must be new (an existing `--out` is BLOCKED). The lock, its signature and its allowed
+    signers are copied into it (never through a symbolic link), and the signature, the content check, the staging
+    and the verdict's digest all read those copies.
+  - After the check and the lint, the locked files are copied into a content-addressed store
+    (`$FV_ROOT/lock-store/<manifest sha256>`, or `FV_LOCK_STORE`), their files made read-only, and verified against the
+    manifest; a copy that differs is BLOCKED; an entry that no longer matches is moved aside and rebuilt.
+  - Every staged tree (trusted, full, native) comes from that store; before the audit and again right before each
+    step that reads a tree (comparator, exports), every locked and staged file is re-hashed and any file the staging
+    did not put there (or a `.lake` before the tree's first build) is BLOCKED. A writer with the gate's own user id
+    can still race the steps themselves; that residual is documented.
+  - New stages: `held_out` and `staged`. Test hooks (`FV_TEST_HOOK_GATE_EDIT`, `FV_TEST_HOOK_GATE_EDIT_STAGED`,
+    `FV_TEST_HOOK_LOCK_SWAP`) simulate the writer for control c115; any hook set is recorded in `verdict.json`
+    (`test_hooks`), and CLOSE refuses the run.
 - **A retention stop is never lost, and never passes.** v0.3.2's public CI showed that on Ubuntu 24.04 (clang 18),
   libFuzzer can die inside its own crash handler (AddressSanitizer `CHECK failed: asan_report.cpp:198`, exit 139)
   before writing the input it stopped on, so the stop was not replayed and the run passed (c89, c112 there).
   - The C++ classify build now writes each input to `FV_CLASSIFY_RETAIN_CURRENT` before running it; a stop libFuzzer
     could not record is taken from there and replayed by the verdict binary. If the verdict binary also dies without
     a reproducer, the stop input is kept as the reproducer and the detail says so.
-  - Fail closed: a generation that stopped on an input with nothing captured is ERROR, never PASS (c116, through a
-    hook that makes the artifact directory unwritable and turns the recording off).
+  - Fail closed: any non-zero exit of the generation (a signal, a sanitizer report, a leak, "fuzz target exited")
+    other than the classify build's own refusal is a stop, and a stop with nothing captured is ERROR, never PASS
+    (c116: a trap, an AddressSanitizer report and a LeakSanitizer report, through a hook that makes the artifact
+    directory unwritable and turns the recording off).
   - CI uploads the fuzz records and the retention logs.
+- **On a clang 18 host, the main campaign** can lose a finding's input the same way: libFuzzer dies inside its
+  crash handler before writing the reproducer. The run is still FAIL (the death is a finding) or ERROR, never PASS,
+  but the mutated input that triggered it is not kept; re-run on a host with a newer clang to get the reproducer.
 - **Upgrading from v0.3.2:** the first gate run of a lock creates its store entry. `fuzz/diff_oracle_template.cpp`
   changed: a project that vendors it re-vendors from v0.3.3 (`fuzz/VENDORED.sha256` has the v0.3.3 lines); an older
   copy still works, and on clang 18 a retention stop is then ERROR instead of replayed.
