@@ -197,6 +197,8 @@ RETAIN_RUNS=$(cfg retain_runs 200000); RETAIN_SEED=$(cfg retain_seed 1); BAD_RET
 RETAIN_JSON=null
 # Test hooks (FV_TEST_HOOK_*): for controls only. Each one set is recorded in fuzz.json (test_hooks), and CLOSE
 # refuses such a run. Unset, no hook changes anything: every hook below is a no-op unless its variable is set.
+#   FV_TEST_HOOK_RETAIN_NO_ARTIFACT=1  the retention generation's artifact prefix is unwritable, so a stop leaves
+#     nothing behind (as on a host where libFuzzer dies inside its own crash handler)
 #   FV_TEST_HOOK_REPLAY_STATUS=retention|merge  (--lang tron-tvm) after that replay, append one forged "ready"
 #     observation (a driver that saw an interface other than lo), as a driver started in that replay would write
 #     it; the driver checks that follow that replay must then refuse the run.
@@ -950,7 +952,7 @@ retention() {
   # The first directory receives libFuzzer's own new units (W, discarded); -reload=0: no timed re-reads.
   FV_CLASSIFY=/dev/null FV_CLASSIFY_RETAIN="$K" $CAP_CLS "$BIN_CLS" "${LIMITS[@]}" "${LENS[@]}" -seed="$RETAIN_SEED" \
     -runs="$RETAIN_RUNS" -use_value_profile=1 -reload=0 -max_total_time="${FV_RETAIN_GUARD_S:-3600}" \
-    -artifact_prefix="$C/retain-artifact-" "$W" "${src[@]}" > "$C/retain.log" 2>&1
+    -artifact_prefix="${FV_TEST_HOOK_RETAIN_NO_ARTIFACT:+/proc/fv-unwritable/}$C/retain-artifact-" "$W" "${src[@]}" > "$C/retain.log" 2>&1
   rc=$?
   done_=$(grep -oE '^Done [0-9]+ runs' "$C/retain.log" | tail -1 | grep -oE '[0-9]+')  # libFuzzer, once -runs is reached
   [ -n "$done_" ] || done_=$(grep -oE '^#[0-9]+' "$C/retain.log" | tail -1 | tr -d '#')
@@ -968,6 +970,14 @@ retention() {
   # that is a finding; if not, the stop was the classifier's own (a describe() or predicate that raised).
   local A="$C/retain-replay-set" arts nk na f
   rm -rf "$A"; mkdir -p "$A"
+  # Fail closed: a generation that stopped on an input (a signal, libFuzzer's crash / timeout / OOM / leak, an
+  # uncaught Python exception, a Rust panic) must have left that input behind, or it can never be compared. A
+  # stop with nothing captured (libFuzzer killed inside its own handler, an unwritable artifact path) is ERROR,
+  # never a PASS. A classify error before any input (exit 3, "CLASSIFY ERROR") is not an input stop.
+  if [ $rc -ne 0 ] && [ -z "$(find "$C" -maxdepth 1 -type f -name 'retain-artifact-*' ! -name '*slow-unit-*' -print -quit)" ] \
+     && { [ $rc -gt 128 ] || grep -qE 'ERROR: libFuzzer: (deadly signal|timeout|out-of-memory|.*leak)|Uncaught Python exception|panicked' "$C/retain.log"; }; then
+    verdict 3 ERROR "the retention generation stopped on an input that was not captured (exit $rc: $(grep -m1 -E 'ERROR: libFuzzer|Uncaught|panicked' "$C/retain.log" | cut -c1-120)), so it was never compared"
+  fi
   arts=$(find "$C" -maxdepth 1 -type f -name 'retain-artifact-*' ! -name '*slow-unit-*' -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')
   nk=0; na=0
   while IFS= read -r -d '' f; do cp -- "$f" "$A/"; nk=$((nk + 1)); done < <(find "$K" -maxdepth 1 -type f -print0)

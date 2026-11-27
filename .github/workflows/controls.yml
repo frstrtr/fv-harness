@@ -92,6 +92,9 @@ jobs:
             ${{ runner.temp }}/fv-harness/runs/controls/fuzz.out
             ${{ runner.temp }}/fv-harness/runs/controls/*/gate.out
             ${{ runner.temp }}/fv-harness/runs/controls/*/run/verdict.json
+            ${{ runner.temp }}/fv-harness/runs/controls/fuzz/*/run/fuzz.json
+            ${{ runner.temp }}/fv-harness/runs/controls/fuzz/*/run/classify/retain.log
+            ${{ runner.temp }}/fv-harness/runs/controls/fuzz/*/run/classify/replay.log
             ${{ runner.temp }}/fv-harness/runs/risk-limit/gate/verdict.json
             ${{ runner.temp }}/fv-harness/runs/risk-limit/fuzz-*/fuzz.json
             ${{ runner.temp }}/fv-harness/runs/risk-limit/*.out
