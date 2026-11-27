@@ -1012,11 +1012,18 @@ retention() {
   if [ $rr -ne 0 ]; then
     executor_verdict "$RUN/retain-replay.log"
     cat "$RUN/retain-replay.log" >> "$RUN/campaign.log"
+    # The verdict binary can die inside libFuzzer's crash handler too (clang 18's ASan) and leave no reproducer:
+    # the generation's stops, the only inputs replayed here that are not retained, are then kept as the reproducers.
+    local note=""
+    if [ -z "$(find "$RUN/artifacts" -maxdepth 1 -type f -name 'retain-*' -print -quit)" ] && [ -n "${arts// /}" ]; then
+      for a in $arts; do cp -- "$C/$a" "$RUN/artifacts/retain-${a#retain-artifact-}"; done
+      note=" (reproducer: the input the generation stopped on; libFuzzer could not write its own)"
+    fi
     keep_reproducers
     classify findings
     rkind=$(fail_kind "$RUN/retain-replay.log")
     [ -n "$rkind" ] || verdict 3 ERROR "retention replay exited $rr without a finding (see $RUN/retain-replay.log)"
-    verdict 1 FAIL "retention replay (class-guided inputs, seed $RETAIN_SEED, $RETAIN_RUNS executions) failed: $rkind"
+    verdict 1 FAIL "retention replay (class-guided inputs, seed $RETAIN_SEED, $RETAIN_RUNS executions) failed: $rkind$note"
   fi
 }
 retention
