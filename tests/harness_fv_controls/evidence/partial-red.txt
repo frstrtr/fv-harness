@@ -1,2 +1,0 @@
-# c108 on dd2ed1a with scripts/formal_task.py as it was at 85f3b0d (the red): c108 must misbehave
-c108_no_classify_close WRONG (a) 3:ERROR:none then 3:ERROR:none; (b) 3:ERROR:none then 2:ERROR:none; (c) 3:ERROR:none; (d) small run exit=0, 0:CLOSED:closure; (e) 3:ERROR:none; keys= [[c108-d-2407892] CLOSE -> CLOSED: closure bundle written: <fv_root>/tasks/c108-d-2407892/closure.json [c108-e-2407892] CLOSE -> ERROR: CLOSE refused: the campaign ran with test hooks FV_T]

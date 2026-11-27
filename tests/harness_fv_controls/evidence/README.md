@@ -7,28 +7,30 @@ implementation language. They come from `tests/harness_fv_controls/run_controls.
 4 cores reserved), with `FV_REQUIRE_LANGS="rust python evm tron-tvm"`, so every language control ran and
 none could SKIP.
 
-The full run was on 85f3b0d. The release then changed only `scripts/formal_task.py` (CLOSE keeps a task
-refused for reduced coverage in CLOSE, so `--reduced-coverage` can close it; a retention budget at or below
-its corpus counts as reduced coverage), one line of `fuzz/run_fuzz.sh` (a reused `--out`'s retained inputs
-are cleared when retention is off), control c108, and wording. On the release head's code (dd2ed1a) these
-ran again, on the same host:
-- `partial-summary.txt`: c1, c6, c7, c89, c112, c90, c113, c108 (rewritten: refused, then closed on the same
-  task through `close` and `run`; a budget of 10) and c65, all OK; `partial-classes-check.txt` lists their
-  records' classification (only c90 (a), (b) are refused, by design);
-- `partial-red.txt`: c108 on that head with `formal_task.py` as it was at 85f3b0d: it misbehaves (the
-  refusal moved the task to ERROR, so the flag could not close it; the budget of 10 closed unqualified);
-- `rehearsal.log` and `lang_rehearsal.log`: from 009f238, whose code differs from dd2ed1a only in c108's
-  fix in `run_fuzz_controls.sh`, which the rehearsals do not run.
-`summary.txt` and `classes-check.txt` are the full run's.
+The run was on this release's code (4c3e64b); the later commits change only the README, this directory and the
+release notes.
 
-`classes-check.txt` is `tests/harness_fv_controls/classes_check.sh` over every `fuzz.json` of the same run
-(the check the clean controls make themselves: a `classes` record with no `error`, not `skipped`, at least one
-class). Every PASS record passes it except the controls whose subject is a classification or retention error
-or a skipped classification: c72 (e), c75 (b), (e), (f), c90 (a), (b).
+`classes-check.txt` is `tests/harness_fv_controls/classes_check.sh` over every `fuzz.json` of the same run: every PASS
+record has a complete classification except the controls whose subject is a classification or retention error or a
+skipped classification (c72 (e), c75 (b), (e), (f), c90 (a), (b)).
 
-Result: 91 controls, 0 misbehaved, 0 skipped; c114 found nothing new in the harness root or the caller's
-directory. The rehearsal passed every step. Every language (cpp, rust, python, evm, tron-tvm) reached CLOSED,
-with the closure naming its language and implementation, and its drift implementation reached CPP_BUGFIX.
+`clang18-and-red.txt`: c89, c112 and c116 on a clang 18 host, as on the hosted runner where v0.3.2's CI failed
+(ubuntu:24.04, pinned by digest, workflow A1's packages, no network after the install). Before the recorded current
+input the stop was ERROR (fail-closed); with it, c89 and c112 FAIL as on the gate host. Also c116's red on the gate
+host (the fail-closed rule removed, the hook kept: PASS).
+
+Result: 93 controls, 0 misbehaved, 0 skipped; c114 found nothing new in the harness root or the caller's directory.
+The rehearsal passed every step. Every language (cpp, rust, python, evm, tron-tvm) reached CLOSED, with the closure
+naming its language and implementation, and its drift implementation reached CPP_BUGFIX.
+
+## Controls added in v0.3.3
+
+Each was first run against the code without its feature, where it misbehaved:
+- c115: the gate audits the locked files: an edit right after the check is BLOCKED (empty store) or never audited
+  (the store's content is), an edit of the staged tree is BLOCKED before any build (red: this release's gate with the
+  store and the re-hash removed, the hooks kept: the edited file was audited);
+- c116: a retention stop with nothing captured is ERROR, never PASS (red: `clang18-and-red.txt`);
+- c89 and c112 now also hold on a clang 18 host (`clang18-and-red.txt`).
 
 ## Controls added in v0.3.2
 
