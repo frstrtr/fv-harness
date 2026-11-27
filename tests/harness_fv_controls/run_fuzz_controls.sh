@@ -84,8 +84,9 @@
 #                 only there) is replayed by the verdict binary: FAIL with the reproducer kept.
 #   c112_retain_paths  the retention replay set whatever the path: (a) an --out holding a space: c89's stop is still
 #                 replayed, FAIL; (b) a reused --out: an earlier run's stop is neither listed nor replayed, PASS.
-#   c116_retain_uncaptured  a generation that stops on an input it could not leave behind (its artifact prefix
-#                 unwritable, by a test hook) is ERROR "not captured", never PASS.
+#   c116_retain_uncaptured  a generation that stops on an input it could not leave behind (a test hook: its artifact
+#                 directory unwritable, the recording off) is ERROR "not captured", never PASS: (a) a trap,
+#                 (b) an AddressSanitizer report, (c) a LeakSanitizer report.
 #   c90_retention_recorded  (a) a generation stopped by its time guard is in classes.error; (b) FV_NO_CLASSIFY=1
 #                 is recorded (no classification, no retention), never silent.
 #   c113_hook_hosts_env  a test hook set in config/hosts.env without export is recorded in fuzz.json test_hooks.
@@ -501,17 +502,32 @@ else
   echo "c112_retain_paths WRONG $r112"; fails=1
 fi
 
-# Control 116: a retention generation that stops on an input it could not leave behind fails closed. c89's trap,
-# with the generation's artifact prefix made unwritable by a test hook (as on a host where libFuzzer dies inside its
-# own crash handler, exit 139, no artifact): ERROR "not captured", never PASS; the hook is recorded.
-rm -rf "$OUT/c116"; mkdir -p "$OUT/c116"; cp -r "$CPP/corpus" "$OUT/c116/corpus"
-FV_TEST_HOOK_RETAIN_NO_ARTIFACT=1 "$ROOT/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$V89" --target diff_transfer \
-  --corpus "$OUT/c116/corpus" --no-merge --out "$OUT/c116/run" --runs 1 --impl-dir "$ROOT/fixtures/conservation_cpp/impl" > "$OUT/c116/run_fuzz.out" 2>&1; rc=$?
-j="$OUT/c116/run/fuzz.json"
-if [ $rc -eq 3 ] && jq -e '(.detail | contains("stopped on an input that was not captured")) and .test_hooks == ["FV_TEST_HOOK_RETAIN_NO_ARTIFACT"]' "$j" > /dev/null; then
-  echo "c116_retain_uncaptured OK the generation stopped with no artifact left: ERROR ($(jq -r '.detail | .[0:110]' "$j")), hook recorded"
+# Control 116: a retention generation that stops on an input it could not leave behind fails closed, whatever the
+# stop. With the generation's artifact directory unwritable and the classify build's recording off (a test hook, as
+# on a host where libFuzzer dies inside its own crash handler): (a) c89's trap, (b) an AddressSanitizer report (a heap
+# overflow on the same edge values), (c) a LeakSanitizer report (a leak on them): each ERROR "not captured", never
+# PASS; the hook is recorded.
+r116=""
+for k in trap asan leak; do
+  V116="$OUT/c116_$k"; rm -rf "$V116"; mkdir -p "$V116"; cp -r "$CPP"/. "$V116"/; sed -i 's/^retain_runs = .*/retain_runs = 200000/' "$V116/fv.toml"
+  case $k in
+    trap) act='__builtin_trap();' ;;
+    asan) act='{ volatile char* b = new char[4]; b[o.amt % 7 + 4] = 1; delete[] b; }' ;;
+    leak) act='{ volatile char* b = new char[64]; b[0] = 1; }' ;;
+  esac
+  sed -i "s|  return Op{fvfuzz::pick_u64(in), fvfuzz::pick_u64(in)};|  Op o{fvfuzz::pick_u64(in), fvfuzz::pick_u64(in)}; if (o.amt == 10000 \&\& o.bps == 10000) $act  // c116\n  return o;|" "$V116/binding.hpp"
+  grep -q '// c116' "$V116/binding.hpp" || r116+="($k) setup: generator line not found; "
+  rm -rf "$OUT/c116$k"; mkdir -p "$OUT/c116$k"; cp -r "$CPP/corpus" "$OUT/c116$k/corpus"
+  FV_TEST_HOOK_RETAIN_NO_ARTIFACT=1 "$ROOT/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$V116" --target diff_transfer \
+    --corpus "$OUT/c116$k/corpus" --no-merge --out "$OUT/c116$k/run" --runs 1 --impl-dir "$ROOT/fixtures/conservation_cpp/impl" > "$OUT/c116$k/run_fuzz.out" 2>&1; rc=$?
+  j="$OUT/c116$k/run/fuzz.json"
+  { [ $rc -eq 3 ] && jq -e '(.detail | contains("stopped on an input that was not captured")) and .test_hooks == ["FV_TEST_HOOK_RETAIN_NO_ARTIFACT"]' "$j" > /dev/null; } \
+    || r116+="($k) exit=$rc $(jq -c '{verdict, detail}' "$j" 2>/dev/null | cut -c1-160); "
+done
+if [ -z "$r116" ]; then
+  echo "c116_retain_uncaptured OK a generation stop with nothing captured is ERROR for (a) a trap, (b) an AddressSanitizer report, (c) a LeakSanitizer report ($(jq -r '.detail | .[0:90]' "$OUT/c116leak/run/fuzz.json")); hook recorded"
 else
-  echo "c116_retain_uncaptured WRONG exit=$rc $(jq -c '{verdict, detail, test_hooks}' "$j" 2>/dev/null | cut -c1-240)"; fails=1
+  echo "c116_retain_uncaptured WRONG $r116"; fails=1
 fi
 
 # Control 90: a retention pass that did not run in full is never silent. (a) The time guard stops the generation

@@ -106,7 +106,8 @@ fi
 # (a) with an empty held-out store: BLOCKED (the copy differs from the lock), nothing audited;
 # (b) with the store c1 already filled: the audit runs on the locked content (the hook's line is in the working
 #     tree, not in any staged tree); (c) a hook that edits the staged trusted tree after staging: BLOCKED before
-#     any build. Each run records its hook in verdict.json test_hooks.
+#     any build; (d) a forged lock copied while the genuine one is checked: BLOCKED (the check reads the copy);
+#     (e) a run directory planted beforehand: BLOCKED; (f) CLOSE on a gate run with a hook: refused.
 r115=""
 p=$(new_project c115a)
 FV_LOCK_STORE="$OUT/c115a/store" FV_TEST_HOOK_GATE_EDIT=spec/challenge/Challenge.lean \
@@ -127,8 +128,32 @@ built=$(cd "$OUT/c115c/run/stages" && ls ./*.status | grep -vE '/(lock|lint|held
 { [ $rc -eq 2 ] && [ "$(cat "$OUT/c115c/run/stages/staged.status" 2>/dev/null)" = BLOCKED ] && [ -z "$built" ] \
   && jq -e '.test_hooks == ["FV_TEST_HOOK_GATE_EDIT_STAGED"]' "$OUT/c115c/run/verdict.json" > /dev/null; } \
   || r115+="(c) exit=$rc staged=$(cat "$OUT/c115c/run/stages/staged.status" 2>/dev/null) later stages: [$built]; "
+# (d) The lock swapped for the check: the lock file is a forged manifest F (made for the trusted tree plus the edit the
+# GATE_EDIT hook appends) with the genuine signature; a hook puts the genuine manifest back right after the gate's
+# copy, and the edit lands after the check. The check reads the copy (F): BLOCKED, nothing staged.
+p=$(new_project c115d); L="$OUT/c115d/locks"; mkdir -p "$L"; cp "$LOCK" "$LOCK.sig" "${LOCK%.sha256}.allowed_signers" "$L/"
+F="$OUT/c115d/forged"; cp -r "$p" "$F"; printf '\n-- FV_TEST_HOOK_GATE_EDIT\n' >> "$F/spec/challenge/Challenge.lean"
+"$ROOT/scripts/spec_lock.sh" lock "$F" "$OUT/c115d/F.sha256" > /dev/null; cp "$OUT/c115d/F.sha256" "$L/conservation.sha256"
+FV_LOCK_STORE="$OUT/c115d/store" FV_TEST_HOOK_LOCK_SWAP="$LOCK" FV_TEST_HOOK_GATE_EDIT=spec/challenge/Challenge.lean \
+  "$ROOT/scripts/verify_proof.sh" --project "$p" --lock "$L/conservation.sha256" --out "$OUT/c115d/run" > "$OUT/c115d/gate.out" 2>&1; rd=$?
+{ [ $rd -eq 2 ] && [ "$(cat "$OUT/c115d/run/stages/lock.status" 2>/dev/null)" = BLOCKED ] && [ ! -e "$OUT/c115d/run/trusted" ]; } \
+  || r115+="(d) exit=$rd lock=$(cat "$OUT/c115d/run/stages/lock.status" 2>/dev/null) trusted=$([ -e "$OUT/c115d/run/trusted" ] && echo staged || echo none); "
+# (e) A run directory planted beforehand (a lock.manifest symlink to a file the planter controls): BLOCKED, the
+# planted file untouched.
+mkdir -p "$OUT/c115e/run"; echo planted > "$OUT/c115e/target"; ln -s "$OUT/c115e/target" "$OUT/c115e/run/lock.manifest"
+p=$(new_project c115e_p); "$ROOT/scripts/verify_proof.sh" --project "$p" --lock "$LOCK" --out "$OUT/c115e/run" > "$OUT/c115e/gate.out" 2>&1; re=$?
+{ [ $re -eq 2 ] && grep -q 'already exists' "$OUT/c115e/gate.out" && [ "$(cat "$OUT/c115e/target")" = planted ]; } \
+  || r115+="(e) exit=$re target=[$(head -c 40 "$OUT/c115e/target")]; "
+# (f) CLOSE of a task whose gate run had a hook (b's PASS): refused.
+T115="c115f-$$"; mkdir -p "$FV_ROOT/tasks/$T115" "$OUT/c115f/couple"; echo '{"lang": "cpp", "verdict": "PASS"}' > "$OUT/c115f/couple/fuzz.json"
+jq -n --arg t "$T115" --arg a "$OUT/c115b/run" --arg c "$OUT/c115f/couple" '{task: $t, state: "CLOSE", project: "", lock: "", lang: "cpp",
+  cpp: {lang: "cpp"}, last_audit: $a, last_couple: $c, history: [], stubs: {}, rounds: 0}' > "$FV_ROOT/tasks/$T115/state.json"
+python3 -I "$ROOT/scripts/formal_task.py" close "$T115" > "$OUT/c115f/close.out" 2>&1; rf=$?
+cp -r "$FV_ROOT/tasks/$T115" "$OUT/c115f/"; rm -rf "${FV_ROOT:?}/tasks/${T115:?}"
+{ [ $rf -eq 3 ] && grep -q 'CLOSE refused: the gate ran with test hooks FV_TEST_HOOK_GATE_EDIT' "$OUT/c115f/close.out" "$OUT/c115f/$T115/state.json"; } \
+  || r115+="(f) close exit=$rf [$(tail -1 "$OUT/c115f/close.out" | cut -c1-120)]; "
 if [ -z "$r115" ]; then
-  report c115_gate_held_out OK "(a) a trusted file edited after the check, empty store: BLOCKED, nothing staged; (b) the same with c1's store: audited the locked content (PASS), the edit only in the working tree; (c) the staged tree edited: BLOCKED before any build; hooks recorded"
+  report c115_gate_held_out OK "(a) a trusted file edited after the check, empty store: BLOCKED, nothing staged; (b) the same with c1's store: audited the locked content (PASS), the edit only in the working tree; (c) the staged tree edited: BLOCKED before any build; (d) the lock swapped for the check (forged F copied, genuine G checked): BLOCKED; (e) a planted run directory: BLOCKED, the planted file untouched; (f) CLOSE on a hooked gate PASS: refused"
 else
   report c115_gate_held_out WRONG "$r115"
 fi
