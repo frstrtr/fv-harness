@@ -10,7 +10,7 @@ c118_inner_rechecks    WRONG  (a) exit=0 staged=PASS [RED: no re-check]; (b) exi
 # (g)'s red exits 123 without a verdict: the edited copy's empty line reached the store's file list. On the release
 # code the edit is BLOCKED before that, and a signed manifest cannot hold such a line (the content check is an exact
 # diff against the manifest the tree produces).
-# The round-2 reds of c115 (d)-(f), on 286d4a6 (the lock read in place, the run directory reused and lock.manifest
+# The reds of c115 (d)-(f), run on 286d4a6 (the lock read in place, the run directory reused and lock.manifest
 # written through, CLOSE not reading the gate's hooks):
 c115_gate_held_out     WRONG  (d) exit=2 lock=PASS trusted=none; (e) exit=0 target=[fde850d24186b6e99c8c0debd641fb3ab85198b1]; (f) close exit=1 [KeyError: 'cmake_dir'];
 # (d): the lock stage passed the swapped-in file (lock=PASS); a later layer, the held-out stage, blocked it, never
