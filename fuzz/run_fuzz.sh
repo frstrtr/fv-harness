@@ -1007,6 +1007,7 @@ retention() {
   [ "$n" -eq $((nk + na)) ] || verdict 3 ERROR "the retention replay set holds $n inputs, not the $nk retained and $na the generation stopped on"
   [ "$n" -gt 0 ] || return 0
   # The verdict binary compares every retained input, and every input the generation stopped on.
+  local pre_art; pre_art=$(find "$RUN/artifacts" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null | LC_ALL=C sort)
   $CAP_BIN "$BIN" "${LIMITS[@]}" -runs=0 -artifact_prefix="$RUN/artifacts/retain-" "$A" > "$RUN/retain-replay.log" 2>&1
   rr=$?
   classify_line_in "$RUN/retain-replay.log" && verdict 3 ERROR "the retention replay ran a classify build, which never compares"
@@ -1016,8 +1017,12 @@ retention() {
     cat "$RUN/retain-replay.log" >> "$RUN/campaign.log"
     # The verdict binary can die inside libFuzzer's crash handler too (clang 18's ASan) and leave no reproducer: every
     # input this replay ran is then kept as a candidate (the failing one is among them; libFuzzer did not name it).
-    local note=""
-    if [ -z "$(find "$RUN/artifacts" -maxdepth 1 -type f -name 'retain-*' -print -quit)" ]; then
+    # A reproducer is any file this replay added to the artifacts other than a slow unit: libFuzzer's retain-* or the
+    # oracle's own mismatch-<hash>.
+    local note="" new_art
+    new_art=$(comm -13 <(printf '%s\n' "$pre_art") <(find "$RUN/artifacts" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort) \
+      | grep -v 'slow-unit-' | grep -v '^$' || true)
+    if [ -z "$new_art" ]; then
       while IFS= read -r -d '' f; do cp -- "$f" "$RUN/artifacts/retain-candidate-$(basename "$f")"; done \
         < <(find "$A" -maxdepth 1 -type f -print0)
       note=" (no reproducer written by libFuzzer: the $n inputs this replay ran are kept as retain-candidate-*, the failing one among them)"

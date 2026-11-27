@@ -284,7 +284,10 @@ if [ "$have_py" = 1 ]; then
   for k in 1 2 3; do
     campaign "c74_$k" python "$X" impl-c74 diff_risk "$LOCK" "$LEAN" --runs 1; rc=$?; j="$OUT/c74_$k/run/fuzz.json"
     a=$(ls "$OUT/c74_$k/run/artifacts/" 2>/dev/null | grep '^mismatch-' | head -1)
-    if [ $rc -ne 1 ] || ! jq -e '.detail | contains("retention replay") and contains("oracle/implementation mismatch")' "$j" > /dev/null || [ -z "$a" ]; then
+    # The oracle's mismatch-<hash> is the reproducer: the detail must not say none was written, and no input may be
+    # kept as a mere candidate.
+    if [ $rc -ne 1 ] || ! jq -e '.detail | contains("retention replay") and contains("oracle/implementation mismatch") and (contains("no reproducer") | not)' "$j" > /dev/null \
+       || [ -z "$a" ] || ls "$OUT/c74_$k/run/artifacts/" 2>/dev/null | grep -q '^retain-candidate-'; then
       bad+="run $k: exit=$rc [$(jq -r .detail "$j" 2>/dev/null | cut -c1-120)] artifact=[$a]; "
     fi
     sig+=("$a $(jq -r '.classes.retention | "\(.seed) \(.executions) \(.retained | join(","))"' "$j" 2>/dev/null | sha256sum | cut -c1-16)")
