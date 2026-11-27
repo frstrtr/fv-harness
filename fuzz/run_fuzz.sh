@@ -197,8 +197,8 @@ RETAIN_RUNS=$(cfg retain_runs 200000); RETAIN_SEED=$(cfg retain_seed 1); BAD_RET
 RETAIN_JSON=null
 # Test hooks (FV_TEST_HOOK_*): for controls only. Each one set is recorded in fuzz.json (test_hooks), and CLOSE
 # refuses such a run. Unset, no hook changes anything: every hook below is a no-op unless its variable is set.
-#   FV_TEST_HOOK_RETAIN_NO_ARTIFACT=1  the retention generation's artifact directory is not writable, so a stop
-#     leaves nothing behind (as with clang 18's ASan, where a SIGILL kills libFuzzer inside its crash handler)
+#   FV_TEST_HOOK_RETAIN_NO_ARTIFACT=1  the retention generation's artifact directory is not writable and the classify
+#     build does not record its current input, so a stop leaves nothing behind
 #   FV_TEST_HOOK_REPLAY_STATUS=retention|merge  (--lang tron-tvm) after that replay, append one forged "ready"
 #     observation (a driver that saw an interface other than lo), as a driver started in that replay would write
 #     it; the driver checks that follow that replay must then refuse the run.
@@ -952,7 +952,9 @@ retention() {
   # The first directory receives libFuzzer's own new units (W, discarded); -reload=0: no timed re-reads.
   # The hook: an artifact directory that exists (libFuzzer checks that at start) but cannot be written.
   [ -z "${FV_TEST_HOOK_RETAIN_NO_ARTIFACT:-}" ] || { mkdir -p "$C/ro" && chmod a-w "$C/ro"; }
-  FV_CLASSIFY=/dev/null FV_CLASSIFY_RETAIN="$K" $CAP_CLS "$BIN_CLS" "${LIMITS[@]}" "${LENS[@]}" -seed="$RETAIN_SEED" \
+  # The C++ classify build also writes each input to retain-current before running it (the hook turns that off too).
+  rm -f "$C/retain-current"; local cur="$C/retain-current"; [ -z "${FV_TEST_HOOK_RETAIN_NO_ARTIFACT:-}" ] || cur=""
+  FV_CLASSIFY=/dev/null FV_CLASSIFY_RETAIN="$K" FV_CLASSIFY_RETAIN_CURRENT="$cur" $CAP_CLS "$BIN_CLS" "${LIMITS[@]}" "${LENS[@]}" -seed="$RETAIN_SEED" \
     -runs="$RETAIN_RUNS" -use_value_profile=1 -reload=0 -max_total_time="${FV_RETAIN_GUARD_S:-3600}" \
     -artifact_prefix="$C/${FV_TEST_HOOK_RETAIN_NO_ARTIFACT:+ro/}retain-artifact-" "$W" "${src[@]}" > "$C/retain.log" 2>&1
   rc=$?
@@ -972,6 +974,13 @@ retention() {
   # that is a finding; if not, the stop was the classifier's own (a describe() or predicate that raised).
   local A="$C/retain-replay-set" arts nk na f
   rm -rf "$A"; mkdir -p "$A"
+  # A stop libFuzzer could not record (its crash handler died first: clang 18's ASan) is recorded from retain-current,
+  # the input the classify build was running.
+  if [ $rc -ne 0 ] && [ -s "$C/retain-current" ] \
+     && [ -z "$(find "$C" -maxdepth 1 -type f -name 'retain-artifact-*' ! -name '*slow-unit-*' -print -quit)" ] \
+     && { [ $rc -gt 128 ] || grep -qE 'ERROR: libFuzzer: (deadly signal|timeout|out-of-memory|.*leak)' "$C/retain.log"; }; then
+    cp -- "$C/retain-current" "$C/retain-artifact-current-$(sha1sum < "$C/retain-current" | cut -c1-40)"
+  fi
   # Fail closed: a generation that stopped on an input (a signal, libFuzzer's crash / timeout / OOM / leak, an
   # uncaught Python exception, a Rust panic) must have left that input behind, or it can never be compared. A
   # stop with nothing captured (libFuzzer killed inside its own handler, an unwritable artifact path) is ERROR,

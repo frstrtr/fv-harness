@@ -198,7 +198,22 @@ static void classify_input(const uint8_t* data, size_t size) {
   if (render) std::fflush(stdout);
 }
 
+// The retention generation (fuzz/run_fuzz.sh 4b) sets FV_CLASSIFY_RETAIN_CURRENT=<file>: each input is written there
+// before it runs, so an input on which the process dies is on disk even when libFuzzer's own crash handler does not
+// get to write its artifact (seen with clang 18's AddressSanitizer, which faults inside that handler).
+static void keep_current(const uint8_t* data, size_t size) {
+  static int fd = -2;
+  if (fd == -2) {
+    const char* p = std::getenv("FV_CLASSIFY_RETAIN_CURRENT");
+    fd = (p && *p) ? ::open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644) : -1;
+  }
+  if (fd < 0) return;
+  (void)!::ftruncate(fd, 0);
+  (void)!::pwrite(fd, data, size, 0);
+}
+
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
+  keep_current(data, size);
   classify_input(data, size);  // the classify build never compares
   return 0;
 }
