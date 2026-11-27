@@ -7,8 +7,8 @@ implementation language. They come from `tests/harness_fv_controls/run_controls.
 4 cores reserved), with `FV_REQUIRE_LANGS="rust python evm tron-tvm"`, so every language control ran and
 none could SKIP.
 
-The run was on this release's code (47b5dee); the later commits change only the README, this directory and the
-release notes.
+The run was on this release's code (47b5dee); the later commits change only documentation and comments (the README,
+this directory, the release notes and comments in `scripts/verify_proof.sh`), no code.
 
 `classes-check.txt` is `tests/harness_fv_controls/classes_check.sh` over every `fuzz.json` of the same run: every PASS
 record has a complete classification except the controls whose subject is a classification or retention error or a

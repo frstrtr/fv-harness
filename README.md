@@ -49,7 +49,8 @@ The pipeline:
   - Now the run directory must be new (an existing `--out` is BLOCKED). The lock, its signature and its allowed
     signers are copied into it (never through a symbolic link; each copy is tested again after the copy, so a link
     put in place meanwhile is BLOCKED), and the signature, the content check, the staging and the verdict's digest
-    all read those copies, re-hashed before use. An unreadable lock file is ERROR, with a verdict.
+    all read those copies, which are re-hashed once, before the held-out step. An unreadable lock file is ERROR, with
+    a verdict.
   - `spec/solution` is copied once into the run directory, and hashed. The lint reads that copy, and the full and
     native trees are built from it, checked again before each use. Before, the lint read the project and the
     solution was copied from the project twice afterwards, so a prover racing the gate could pass the lint with
@@ -78,6 +79,11 @@ The pipeline:
     (c116: a trap, an AddressSanitizer, a LeakSanitizer and an UndefinedBehaviorSanitizer report, and the target
     calling `exit()`, through a hook that makes the artifact directory unwritable and turns the recording off).
   - CI uploads the fuzz records and the retention logs.
+- **Known limitation: CLOSE does not yet tie the closure to the audited solution.** `formal_task.py close` hashes the
+  project as it is at CLOSE time (`closed_tree`), and nothing compares that with the solution the gate audited
+  (`solution.manifest` in the gate's run). A solution edited after the audit (as in c117 (b), where the gate builds
+  the clean copy it linted) is then named in the closure though it was never audited. The next release compares the
+  two and refuses CLOSE on a mismatch.
 - **On a clang 18 host, the main campaign** can lose a finding's input the same way: libFuzzer dies inside its
   crash handler before writing the reproducer. The run is still FAIL (the death is a finding) or ERROR, never PASS,
   but the mutated input that triggered it is not kept; re-run on a host with a newer clang to get the reproducer.
@@ -306,7 +312,7 @@ A verified project is a Lake project with:
 |---|---|---|
 | `lock` | `LOCK.sig` verifies, its signer matches the pinned fingerprint, and the trusted files equal the manifest (optional `--git-base` diff gate). Failure means BLOCKED and nothing is audited | Edits to the challenge or build config; a lock rewritten without the operator's key |
 | `held_out` | The locked files, copied once into a read-only content-addressed store and verified against the manifest; every tree is staged from there | A writer changing the trusted files after the check |
-| `staged` | Every staged tree (and the gate's one copy of the solution) re-hashed right before the builds and before every audit step that reads it; no unlisted file, no `.lake` before the first build | A writer in the run directory between the gate's steps |
+| `staged` | Every staged tree (its locked and staged solution files) re-hashed right before the builds and before every audit step that reads it, and the gate's solution copy before each staging; no unlisted file, no `.lake` before the first build | A writer in the run directory between the gate's steps |
 | `lint` | On the gate's copy of `spec/solution`: no sorry/admit/axiom/native_decide/extern/implemented_by/metaprogramming; files ≤ 1000 lines; only `Solution*.lean` | Policy violations, early |
 | `netns` | The audit runs in a fresh network namespace (`sudo unshare --net`, then setpriv back to the user) | Network access during verification |
 | `comparator_native` | `lake comparator --paranoid`: Lake builds and exports in bwrap, compares statements structurally, checks the axiom whitelist, then runs leanchecker, leanchecker-paranoid, lean4lean, nanoda, con-leche and con-ron | Weakened or shadowed statements, axioms, kernel bugs |
@@ -366,9 +372,11 @@ What remains is detective:
 **The run directory has the same limit.** The gate and the prover run as one OS user on the reference host, so a
 process of that user can edit the run directory between a check and the read it guards. v0.3.3 narrows that window:
 the lock files are copied once and tested again after the copy, the locked files come from a read-only store, the
-solution is copied once, and every copy is re-hashed right before each step that reads it. Within a step (between
-the last check and the read itself), and for a writer who also edits the gate's own records, nothing in-band can
-close it; only a separate user for the gate would.
+solution is copied once, the staged trees are re-hashed right before each build and audit step that reads them, and
+the solution copy before each staging. Not everything is checked again: the lock copies are re-hashed once, before
+the held-out step; after that the staging, `gate_inner.sh`'s checks and the verdict's `lock_digest` read the lock
+copy without checking it again. Within a step (between the last check and the read itself), and for a writer who
+also edits the gate's own records, nothing in-band can close it; only a separate user for the gate would.
 
 **The final assurance is the operator's ten-second check:** the fingerprint on the first line of
 each CLOSE report must equal the one they stated. A report whose fingerprint differs is void.

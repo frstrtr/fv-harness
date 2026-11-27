@@ -31,8 +31,10 @@
 #
 # The project is never built in place: the gate copies the lock, the locked files (through the store) and
 # spec/solution (once) into RUNDIR and builds only there. Residual: a writer running as the gate's own user can edit
-# the run directory between a check and the read it guards; each read is checked again, which narrows the window but
-# cannot close it (the gate and the prover share one uid on the reference host).
+# the run directory between a check and the read it guards (the gate and the prover share one uid on the reference
+# host). The staged trees are re-checked before each build and audit step and the solution copy before each staging,
+# which narrows the window but cannot close it. The lock copies are re-hashed only once, before the held-out step; the
+# staging, gate_inner.sh's checks and verdict.py's lock_digest read the lock copy after that without checking it again.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
