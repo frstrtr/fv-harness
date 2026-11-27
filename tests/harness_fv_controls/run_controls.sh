@@ -144,8 +144,10 @@ mkdir -p "$OUT/c115e/run"; echo planted > "$OUT/c115e/target"; ln -s "$OUT/c115e
 p=$(new_project c115e_p); "$ROOT/scripts/verify_proof.sh" --project "$p" --lock "$LOCK" --out "$OUT/c115e/run" > "$OUT/c115e/gate.out" 2>&1; re=$?
 { [ $re -eq 2 ] && grep -q 'already exists' "$OUT/c115e/gate.out" && [ "$(cat "$OUT/c115e/target")" = planted ]; } \
   || r115+="(e) exit=$re target=[$(head -c 40 "$OUT/c115e/target")]; "
-# (f) CLOSE of a task whose gate run had a hook (b's PASS): refused.
-T115="c115f-$$"; mkdir -p "$FV_ROOT/tasks/$T115" "$OUT/c115f/couple"; echo '{"lang": "cpp", "verdict": "PASS"}' > "$OUT/c115f/couple/fuzz.json"
+# (f) CLOSE of a task whose gate run had a hook (b's PASS): refused. The fuzz record is complete (classification and
+# a full retention pass), so the gate's hook is the only reason to refuse: without that check CLOSE goes on.
+T115="c115f-$$"; mkdir -p "$FV_ROOT/tasks/$T115" "$OUT/c115f/couple"
+echo '{"lang": "cpp", "verdict": "PASS", "classes": {"inputs": 10, "retention": {"complete": true, "runs": 200000, "retained": []}}}' > "$OUT/c115f/couple/fuzz.json"
 jq -n --arg t "$T115" --arg a "$OUT/c115b/run" --arg c "$OUT/c115f/couple" '{task: $t, state: "CLOSE", project: "", lock: "", lang: "cpp",
   cpp: {lang: "cpp"}, last_audit: $a, last_couple: $c, history: [], stubs: {}, rounds: 0}' > "$FV_ROOT/tasks/$T115/state.json"
 python3 -I "$ROOT/scripts/formal_task.py" close "$T115" > "$OUT/c115f/close.out" 2>&1; rf=$?
