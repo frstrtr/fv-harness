@@ -7,17 +7,19 @@ implementation language. They come from `tests/harness_fv_controls/run_controls.
 4 cores reserved), with `FV_REQUIRE_LANGS="rust python evm tron-tvm"`, so every language control ran and
 none could SKIP.
 
-The run was on this release's code (4c3e64b); the later commits change only the README, this directory and the
+The run was on this release's code (286d4a6); the later commits change only the README, this directory and the
 release notes.
 
 `classes-check.txt` is `tests/harness_fv_controls/classes_check.sh` over every `fuzz.json` of the same run: every PASS
 record has a complete classification except the controls whose subject is a classification or retention error or a
-skipped classification (c72 (e), c75 (b), (e), (f), c90 (a), (b)).
+skipped classification (c72 (e), c75 (b), (e), (f), c90 (a), (b)), and c115 (f)'s fuzz record, which the control writes
+by hand (no classes) to test CLOSE.
 
 `clang18-and-red.txt`: c89, c112 and c116 on a clang 18 host, as on the hosted runner where v0.3.2's CI failed
 (ubuntu:24.04, pinned by digest, workflow A1's packages, no network after the install). Before the recorded current
-input the stop was ERROR (fail-closed); with it, c89 and c112 FAIL as on the gate host. Also c116's red on the gate
-host (the fail-closed rule removed, the hook kept: PASS).
+input the stop was ERROR (fail-closed); with it, c89 and c112 FAIL as on the gate host, and c116 is ERROR for a trap,
+an AddressSanitizer and a LeakSanitizer stop. Also c116's reds on the gate host: the fail-closed rule removed (a trap:
+PASS), and the earlier narrow stop rule (the two sanitizer reports: PASS, in `red-v033.txt`).
 
 Result: 93 controls, 0 misbehaved, 0 skipped; c114 found nothing new in the harness root or the caller's directory.
 The rehearsal passed every step. Every language (cpp, rust, python, evm, tron-tvm) reached CLOSED, with the closure
@@ -25,11 +27,20 @@ naming its language and implementation, and its drift implementation reached CPP
 
 ## Controls added in v0.3.3
 
-Each was first run against the code without its feature, where it misbehaved:
-- c115: the gate audits the locked files: an edit right after the check is BLOCKED (empty store) or never audited
-  (the store's content is), an edit of the staged tree is BLOCKED before any build (red: this release's gate with the
-  store and the re-hash removed, the hooks kept: the edited file was audited);
-- c116: a retention stop with nothing captured is ERROR, never PASS (red: `clang18-and-red.txt`);
+Each was first run against the code without its feature, where it misbehaved (`red-v033.txt`):
+- c115, the gate audits the locked files:
+  - (a) an edit right after the check is BLOCKED (empty store) or (b) never audited (the store's content is);
+  - (c) an edit of the staged tree is BLOCKED before any build;
+  - red for (a)–(c): this release's gate with the store and the re-hash removed, the hooks kept: the edited file
+    was audited;
+  - (d) a lock file swapped after the gate copied it is BLOCKED at the lock, the copy being what is checked (red:
+    the check reads the file in place and passes it);
+  - (e) a planted run directory with a `lock.manifest` link is BLOCKED and the link's target untouched (red: the
+    directory reused, the target overwritten);
+  - (f) CLOSE of a gate PASS that ran with a hook is refused, the fuzz record being complete (red: the gate's
+    hooks not read, CLOSE goes on to write the closure);
+- c116: a retention stop with nothing captured is ERROR, never PASS, for a trap, an AddressSanitizer report and a
+  LeakSanitizer report (red: the narrow stop rule: the two sanitizer reports pass);
 - c89 and c112 now also hold on a clang 18 host (`clang18-and-red.txt`).
 
 ## Controls added in v0.3.2

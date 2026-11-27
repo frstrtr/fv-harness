@@ -1,0 +1,7 @@
+# v0.3.3 reds: each control run against the code without its feature (gate host, cores 12-15).
+# c115 (d), (e): this release's gate with the lock read in place, the run directory reused and lock.manifest written through; (f): CLOSE without reading the gate's hooks (286d4a6)
+c115_gate_held_out     WRONG  (d) exit=2 lock=PASS trusted=none; (e) exit=0 target=[fde850d24186b6e99c8c0debd641fb3ab85198b1]; (f) close exit=1 [KeyError: 'cmake_dir']; 
+# c116: the narrow stop rule (signals and libFuzzer's own deadly-signal / timeout / out-of-memory / leak lines only), the hook kept (6aa7b02; run_fuzz.sh unchanged since)
+c116_retain_uncaptured WRONG (asan) exit=0 {"verdict":"PASS","detail":"no mismatch"}; (leak) exit=0 {"verdict":"PASS","detail":"no mismatch"}; 
+# Note on c115 (d)'s red: the lock stage passed the swapped-in file (lock=PASS, signer match=yes); the run was then
+# BLOCKED by the held-out stage ("no held-out copy matches the lock"), a later layer, never at the lock as required.
