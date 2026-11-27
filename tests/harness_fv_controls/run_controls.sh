@@ -106,8 +106,10 @@ fi
 # (a) with an empty held-out store: BLOCKED (the copy differs from the lock), nothing audited;
 # (b) with the store c1 already filled: the audit runs on the locked content (the hook's line is in the working
 #     tree, not in any staged tree); (c) a hook that edits the staged trusted tree after staging: BLOCKED before
-#     any build; (d) a forged lock copied while the genuine one is checked: BLOCKED (the check reads the copy);
-#     (e) a run directory planted beforehand: BLOCKED; (f) CLOSE on a gate run with a hook: refused.
+#     any build; (d) the gate copies a forged lock F, then the genuine G is put in its place: the check reads the
+#     copy F, BLOCKED; (e) a run directory planted beforehand: BLOCKED; (f) CLOSE on a gate run with a hook: refused;
+#     (g) the gate's copy of the lock edited after the check: BLOCKED before the held-out copy is used; (h) the
+#     signature replaced by a link between the gate's test and its copy: BLOCKED at the copy.
 r115=""
 p=$(new_project c115a)
 FV_LOCK_STORE="$OUT/c115a/store" FV_TEST_HOOK_GATE_EDIT=spec/challenge/Challenge.lean \
@@ -154,10 +156,75 @@ python3 -I "$ROOT/scripts/formal_task.py" close "$T115" > "$OUT/c115f/close.out"
 cp -r "$FV_ROOT/tasks/$T115" "$OUT/c115f/"; rm -rf "${FV_ROOT:?}/tasks/${T115:?}"
 { [ $rf -eq 3 ] && grep -q 'CLOSE refused: the gate ran with test hooks FV_TEST_HOOK_GATE_EDIT' "$OUT/c115f/close.out" "$OUT/c115f/$T115/state.json"; } \
   || r115+="(f) close exit=$rf [$(tail -1 "$OUT/c115f/close.out" | cut -c1-120)]; "
+# (g) The gate's copy of the lock edited after the check (a writer in the run directory): BLOCKED at the held-out step.
+p=$(new_project c115g); FV_TEST_HOOK_LOCK_COPY_EDIT=1 \
+  "$ROOT/scripts/verify_proof.sh" --project "$p" --lock "$LOCK" --out "$OUT/c115g/run" > "$OUT/c115g/gate.out" 2>&1; rg=$?
+{ [ $rg -eq 2 ] && grep -q "the gate's copy of the lock changed after the check" "$OUT/c115g/run/stages/held_out.log" 2>/dev/null \
+  && [ ! -e "$OUT/c115g/run/trusted" ]; } \
+  || r115+="(g) exit=$rg held_out=[$(head -1 "$OUT/c115g/run/stages/held_out.log" 2>/dev/null | cut -c1-80)]; "
+# (h) The signature replaced by a link (to a genuine signature) between the gate's link test and its copy: the copy is
+# tested again, BLOCKED.
+p=$(new_project c115h); L="$OUT/c115h/locks"; mkdir -p "$L"; cp "$LOCK" "$LOCK.sig" "${LOCK%.sha256}.allowed_signers" "$L/"
+cp "$LOCK.sig" "$OUT/c115h/genuine.sig"
+FV_TEST_HOOK_LOCK_LINK="$OUT/c115h/genuine.sig" \
+  "$ROOT/scripts/verify_proof.sh" --project "$p" --lock "$L/conservation.sha256" --out "$OUT/c115h/run" > "$OUT/c115h/gate.out" 2>&1; rh=$?
+{ [ $rh -eq 2 ] && grep -q 'was replaced by a link or a non-file while it was copied' "$OUT/c115h/run/stages/lock.log" 2>/dev/null; } \
+  || r115+="(h) exit=$rh lock=$(cat "$OUT/c115h/run/stages/lock.status" 2>/dev/null) [$(head -1 "$OUT/c115h/run/stages/lock.log" 2>/dev/null | cut -c1-80)]; "
 if [ -z "$r115" ]; then
-  report c115_gate_held_out OK "(a) a trusted file edited after the check, empty store: BLOCKED, nothing staged; (b) the same with c1's store: audited the locked content (PASS), the edit only in the working tree; (c) the staged tree edited: BLOCKED before any build; (d) the lock swapped for the check (forged F copied, genuine G checked): BLOCKED; (e) a planted run directory: BLOCKED, the planted file untouched; (f) CLOSE on a hooked gate PASS: refused"
+  report c115_gate_held_out OK "(a) a trusted file edited after the check, empty store: BLOCKED, nothing staged; (b) the same with c1's store: audited the locked content (PASS), the edit only in the working tree; (c) the staged tree edited: BLOCKED before any build; (d) the gate copied a forged lock, then the genuine one was put in place: the copy was checked, BLOCKED; (e) a planted run directory: BLOCKED, the planted file untouched; (f) CLOSE on a hooked gate PASS: refused; (g) the lock copy edited after the check: BLOCKED; (h) the signature swapped for a link while copied: BLOCKED"
 else
   report c115_gate_held_out WRONG "$r115"
+fi
+
+# Control 117: the lint and the builds read one copy of the solution. A hook puts a Solution.lean with #eval (which the
+# lint refuses) in place right after the lint: (a) in the project and the gate's copy: BLOCKED before any build, the
+# lint having passed the clean copy; (b) in the project only: the gate builds the clean copy it linted (PASS), no
+# staged tree holds the #eval.
+r117=""; E117="$OUT/c117_eval.lean"; { cat "$FIX/$FV_SOLUTION_REL/Solution.lean"; printf '\n#eval (1 : Nat)\n'; } > "$E117"
+p=$(new_project c117a); FV_TEST_HOOK_LINT_SWAP="$E117" \
+  "$ROOT/scripts/verify_proof.sh" --project "$p" --lock "$LOCK" --out "$OUT/c117a/run" > "$OUT/c117a/gate.out" 2>&1; r1=$?
+built=$(cd "$OUT/c117a/run/stages" 2>/dev/null && ls ./*.status | grep -vE '/(lock|lint|held_out|staged)\.status' | tr '\n' ' ')
+{ [ $r1 -eq 2 ] && [ "$(cat "$OUT/c117a/run/stages/lint.status" 2>/dev/null)" = PASS ] \
+  && [ "$(cat "$OUT/c117a/run/stages/staged.status" 2>/dev/null)" = BLOCKED ] && [ -z "$built" ] \
+  && grep -q 'changed after the lint' "$OUT/c117a/run/stages/staged.log"; } \
+  || r117+="(a) exit=$r1 lint=$(cat "$OUT/c117a/run/stages/lint.status" 2>/dev/null) staged=$(cat "$OUT/c117a/run/stages/staged.status" 2>/dev/null) later=[$built]; "
+p=$(new_project c117b); FV_TEST_HOOK_LINT_SWAP="$E117:project" \
+  "$ROOT/scripts/verify_proof.sh" --project "$p" --lock "$LOCK" --out "$OUT/c117b/run" > "$OUT/c117b/gate.out" 2>&1; r2=$?
+{ [ $r2 -eq 0 ] && grep -q '#eval' "$p/$FV_SOLUTION_REL/Solution.lean" \
+  && ! grep -rq '#eval' "$OUT/c117b/run/full/$FV_SOLUTION_REL" "$OUT/c117b/run/native/$FV_SOLUTION_REL"; } \
+  || r117+="(b) exit=$r2 #eval-in-staged=$(grep -rl '#eval' "$OUT/c117b/run/full/$FV_SOLUTION_REL" 2>/dev/null | head -1); "
+if [ -z "$r117" ]; then
+  report c117_lint_staged_copy OK "(a) the gate's copy swapped after the lint: BLOCKED before any build (lint PASS on the clean copy); (b) the project's file swapped after the lint: the clean copy it linted was built (PASS), no #eval staged"
+else
+  report c117_lint_staged_copy WRONG "$r117"
+fi
+
+# Control 118: gate_inner.sh checks every staged tree again right before each step that reads it. A hook acts as a
+# writer in the run directory after verify_proof.sh's own checks; each refusal is BLOCKED at its step:
+# (a) a locked file edited before the audit; (b) a file planted before the audit; (c) .lake made before the first build;
+# (d) a file planted in the native tree before comparator_native; (e) the staged solution edited before the export;
+# (f) a locked file of the built trusted tree edited before comparator_export.
+r118=""
+inner_case() { # inner_case KEY HOOK MESSAGE [STAGE-THAT-MUST-HAVE-RUN]
+  local k="$1" h="$2" msg="$3" ran="${4:-}" p rk
+  p=$(new_project "c118$k"); FV_TEST_HOOK_INNER="$h" \
+    "$ROOT/scripts/verify_proof.sh" --project "$p" --lock "$LOCK" --out "$OUT/c118$k/run" > "$OUT/c118$k/gate.out" 2>&1; rk=$?
+  { [ $rk -eq 2 ] && [ "$(cat "$OUT/c118$k/run/stages/staged.status" 2>/dev/null)" = BLOCKED ] \
+    && grep -q -- "$msg" "$OUT/c118$k/run/stages/staged.log" \
+    && { [ -z "$ran" ] || [ -e "$OUT/c118$k/run/stages/$ran.status" ]; } \
+    && jq -e '.test_hooks == ["FV_TEST_HOOK_INNER"]' "$OUT/c118$k/run/verdict.json" > /dev/null; } \
+    || r118+="($k) exit=$rk staged=$(cat "$OUT/c118$k/run/stages/staged.status" 2>/dev/null) [$(head -1 "$OUT/c118$k/run/stages/staged.log" 2>/dev/null | cut -c1-90)]; "
+}
+inner_case a audit:edit:trusted:spec/challenge/Challenge.lean "differs from the lock or its staging before audit"
+inner_case b audit:plant:full:spec/solution/Planted.lean "files the staging did not put there before audit"
+inner_case c audit:lake:native "has a .lake before its first build (audit)"
+inner_case d comparator_native:plant:native:spec/solution/Planted.lean "files the staging did not put there before comparator_native"
+inner_case e export:edit:full:spec/solution/Solution.lean "differs from the lock or its staging before export" comparator_native
+inner_case f comparator_export:edit:trusted:spec/challenge/Challenge.lean "differs from the lock or its staging before comparator_export" export
+if [ -z "$r118" ]; then
+  report c118_inner_rechecks OK "a writer in the run after the gate's checks is BLOCKED at the next step: (a) a locked file edited, (b) a file planted, (c) an early .lake, all before the audit; (d) a file planted before comparator_native; (e) the staged solution edited before the export; (f) the built trusted tree edited before comparator_export"
+else
+  report c118_inner_rechecks WRONG "$r118"
 fi
 
 # Controls 5c/5d: the agent edits the challenge AND rewrites the lock. Each run starts from a

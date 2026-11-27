@@ -505,16 +505,20 @@ fi
 # Control 116: a retention generation that stops on an input it could not leave behind fails closed, whatever the
 # stop. With the generation's artifact directory unwritable and the classify build's recording off (a test hook, as
 # on a host where libFuzzer dies inside its own crash handler): (a) c89's trap, (b) an AddressSanitizer report (a heap
-# overflow on the same edge values), (c) a LeakSanitizer report (a leak on them): each ERROR "not captured", never
-# PASS; the hook is recorded.
+# overflow on the same edge values), (c) a LeakSanitizer report (a leak on them), (d) an UndefinedBehaviorSanitizer
+# report (a signed overflow), (e) the fuzz target calling exit(): each ERROR "not captured", never PASS; the hook is
+# recorded.
 r116=""
-for k in trap asan leak; do
+for k in trap asan leak ubsan exit; do
   V116="$OUT/c116_$k"; rm -rf "$V116"; mkdir -p "$V116"; cp -r "$CPP"/. "$V116"/; sed -i 's/^retain_runs = .*/retain_runs = 200000/' "$V116/fv.toml"
   case $k in
     trap) act='__builtin_trap();' ;;
     asan) act='{ volatile char* b = new char[4]; b[o.amt % 7 + 4] = 1; delete[] b; }' ;;
     leak) act='{ volatile char* b = new char[64]; b[0] = 1; }' ;;
+    ubsan) act='{ volatile int x = 2147483647; x = x + 1; }' ;;
+    exit) act='::exit(0);' ;;
   esac
+  [ $k = exit ] && sed -i '1i #include <cstdlib>  // c116 (e)' "$V116/binding.hpp"
   sed -i "s|  return Op{fvfuzz::pick_u64(in), fvfuzz::pick_u64(in)};|  Op o{fvfuzz::pick_u64(in), fvfuzz::pick_u64(in)}; if (o.amt == 10000 \&\& o.bps == 10000) $act  // c116\n  return o;|" "$V116/binding.hpp"
   grep -q '// c116' "$V116/binding.hpp" || r116+="($k) setup: generator line not found; "
   rm -rf "$OUT/c116$k"; mkdir -p "$OUT/c116$k"; cp -r "$CPP/corpus" "$OUT/c116$k/corpus"
@@ -525,7 +529,7 @@ for k in trap asan leak; do
     || r116+="($k) exit=$rc $(jq -c '{verdict, detail}' "$j" 2>/dev/null | cut -c1-160); "
 done
 if [ -z "$r116" ]; then
-  echo "c116_retain_uncaptured OK a generation stop with nothing captured is ERROR for (a) a trap, (b) an AddressSanitizer report, (c) a LeakSanitizer report ($(jq -r '.detail | .[0:90]' "$OUT/c116leak/run/fuzz.json")); hook recorded"
+  echo "c116_retain_uncaptured OK a generation stop with nothing captured is ERROR for (a) a trap, (b) an AddressSanitizer report, (c) a LeakSanitizer report, (d) an UndefinedBehaviorSanitizer report, (e) the target calling exit() ($(jq -r '.detail | .[0:90]' "$OUT/c116exit/run/fuzz.json")); hook recorded"
 else
   echo "c116_retain_uncaptured WRONG $r116"; fails=1
 fi
