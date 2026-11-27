@@ -301,6 +301,8 @@ def cmd_audit(a):
     t = Task(a.task); st = t.load(); guard(st, "audit")
     n = sum(1 for h in st["history"] if h.get("from") == "AUDIT") + 1
     run = t.dir / f"audit-{n}"
+    while run.exists():   # the gate needs a fresh run directory (an earlier attempt may have left one)
+        n += 1; run = t.dir / f"audit-{n}"
     rc = run_logged([str(HARNESS / "scripts/verify_proof.sh"), "--project", st["project"], "--lock", st["lock"],
                      "--out", str(run)], t.dir / f"audit-{n}.log")
     verdict = json.loads((run / "verdict.json").read_text()) if (run / "verdict.json").is_file() else {}

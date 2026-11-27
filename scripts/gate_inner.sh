@@ -15,13 +15,27 @@ ifaces=$(tail -n +3 /proc/net/dev | cut -d: -f1 | tr -d ' ' | sort | tr '\n' ' '
 echo "interfaces: $ifaces" > "$RUN/stages/netns.log"
 if [ "$ifaces" = "lo " ]; then stage_set netns PASS; else stage_set netns ERROR; exit 0; fi
 
-# ---- the staged trees, once more, right before the first build ---------------------------------
-for t in trusted full native; do
-  if ! (cd "$RUN/$t" && sha256sum --check --quiet --strict "$RUN/lock.manifest") > /dev/null 2>&1; then
-    echo "BLOCKED: staged tree $t differs from the lock at the start of the audit" > "$RUN/stages/staged.log"
-    stage_set staged BLOCKED; exit 0
-  fi
-done
+# ---- the staged trees, checked again right before every step that reads them ---------------------
+# Every locked file with its locked hash, every staged solution file with its staged hash, and nothing else: a
+# file the staging did not put there fails, and so does .lake in a tree that has not been built yet.
+check_tree() { # check_tree TREE BUILT(0|1) STEP
+  local d="$RUN/$1" extra
+  (cd "$d" && sha256sum --check --quiet --strict "$RUN/lock.manifest" \
+     && { [ ! -s "$RUN/staged-$1.manifest" ] || sha256sum --check --quiet --strict "$RUN/staged-$1.manifest"; }) \
+    > /dev/null 2>&1 || { echo "BLOCKED: staged tree $1 differs from the lock or its staging before $3"; return 1; }
+  extra=$(cd "$d" && find . -type f ! -path "./.lake/*" -printf '%P\n' | LC_ALL=C sort \
+          | comm -23 - <( { cut -d' ' -f3- "$RUN/lock.manifest"; cut -d' ' -f3- "$RUN/staged-$1.manifest"; } | LC_ALL=C sort))
+  [ -z "$extra" ] || { echo "BLOCKED: staged tree $1 has files the staging did not put there before $3: $(echo $extra | cut -c1-200)"; return 1; }
+  [ "$2" = 1 ] || [ ! -e "$d/.lake" ] || { echo "BLOCKED: staged tree $1 has a .lake before its first build ($3)"; return 1; }
+}
+check_trees() { # check_trees STEP TREE:BUILT ...
+  local step="$1" tb; shift
+  for tb in "$@"; do
+    if ! check_tree "${tb%%:*}" "${tb#*:}" "$step" > "$RUN/stages/staged.log" 2>&1; then stage_set staged BLOCKED; exit 0; fi
+  done
+  echo "every staged tree matches the lock and its staging (last check: before $step)" > "$RUN/stages/staged.log"
+}
+check_trees "the audit" trusted:0 full:0 native:0
 
 # ---- provenance ------------------------------------------------------------------------------
 {
@@ -63,6 +77,7 @@ mapfile -t names < <(
   json_names "$cfg" definition_names)
 
 # ---- comparator_native ------------------------------------------------------------------------
+check_trees comparator_native native:0
 ( cd "$RUN/native" && capped "$LAKE" comparator --paranoid --config comparator.json ) \
   > "$RUN/stages/comparator_native.log" 2>&1
 rc=$?
@@ -84,6 +99,7 @@ build_export() { # build_export TREE MODULE OUT.ndjson
     "$LEAN_TC/bin/leanexport" "$mod" -- "${names[@]}" > "$outf" || return 1
   [ -s "$outf" ]
 }
+check_trees export trusted:0 full:0
 {
   echo "== challenge ($chal_mod) from the solution-free tree"
   build_export "$RUN/trusted" "$chal_mod" "$RUN/exports/challenge.ndjson" && c_ok=1 || c_ok=0
@@ -104,6 +120,7 @@ fi
 C="$RUN/exports/challenge.ndjson"; S="$RUN/exports/solution.ndjson"
 
 # ---- comparator_export ------------------------------------------------------------------------
+check_trees comparator_export trusted:1
 ( cd "$RUN/trusted" && capped "$LAKE" comparator --config comparator.json \
     --challenge-from-export="$C" --solution-from-export="$S" ) > "$RUN/stages/comparator_export.log" 2>&1
 rc=$?

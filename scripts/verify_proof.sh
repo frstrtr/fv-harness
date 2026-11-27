@@ -47,12 +47,15 @@ done
 [ -d "$proj" ] && [ -f "$lock" ] || die "usage: $0 --project DIR --lock LOCKFILE [--out RUNDIR] [--git-base REV]"
 proj="$(cd "$proj" && pwd)"; lock="$(cd "$(dirname "$lock")" && pwd)/$(basename "$lock")"
 
+# A fresh run directory, created here (mkdir fails on an existing one: nothing can be planted in it beforehand).
 RUN="${out:-$FV_ROOT/runs/$(basename "$proj")-$(date +%Y%m%dT%H%M%S)-$$}"
-mkdir -p "$RUN/stages"
+mkdir -p "$(dirname "$RUN")"
+if ! mkdir -- "$RUN" 2>/dev/null; then echo "BLOCKED: the run directory $RUN already exists (the gate needs a fresh one)" >&2; exit 2; fi
+mkdir "$RUN/stages"
 RUN="$(cd "$RUN" && pwd)"; export RUN
 
 finish() { # finish EXITCODE VERDICT
-  python3 -I "$HERE/verdict.py" "$RUN" "$2" "$1" "$proj" "$lock" > "$RUN/verdict.json"
+  python3 -I "$HERE/verdict.py" "$RUN" "$2" "$1" "$proj" "$lock" "${LOCKC:-}" > "$RUN/verdict.json"
   note "verdict $2 (exit $1) — $RUN/verdict.json"
   [ -s "$RUN/signer.txt" ] && echo "SPEC-LOCK $(cat "$RUN/signer.txt")"
   exit "$1"
@@ -60,14 +63,23 @@ finish() { # finish EXITCODE VERDICT
 
 # Test hooks (FV_TEST_HOOK_*): for controls only. Each one set (exported or not) is recorded in verdict.json
 # (test_hooks), and CLOSE refuses such a run.
-#   FV_TEST_HOOK_GATE_EDIT=REL         after the lock check, append a line to the project's trusted file REL
+#   FV_TEST_HOOK_GATE_EDIT=REL         after the lock check and the lint, append a line to the project's trusted file REL
 #                                      (a writer racing the gate)
 #   FV_TEST_HOOK_GATE_EDIT_STAGED=REL  after staging, append a line to RUN/trusted/REL (a writer in the run)
+#   FV_TEST_HOOK_LOCK_SWAP=FILE        after the lock is copied, put FILE (a genuinely signed manifest) in its place
+#                                      (a lock swapped for the check)
 compgen -v | grep -E '^FV_TEST_HOOK_[A-Z0-9_]*$' | LC_ALL=C sort > "$RUN/test_hooks.txt" || true
 
-# The manifest as it is now: every later step reads this copy, never the lock file again (a lock replaced
-# during the check is BLOCKED below).
-cp -- "$lock" "$RUN/lock.manifest"
+# The lock, its signature and its allowed signers are copied once into the fresh run directory, and everything after
+# (the signature check, the content check, staging, the verdict's digest) reads only these copies.
+mkdir "$RUN/lock"; LOCKC="$RUN/lock/$(basename "$lock")"
+for f in "$lock" "$lock.sig" "${lock%.sha256}.allowed_signers"; do
+  [ -e "$f" ] || continue
+  [ -L "$f" ] && { echo "BLOCKED: $f is a symbolic link" > "$RUN/stages/lock.log"; stage_set lock BLOCKED; finish 2 BLOCKED; }
+  cp --no-dereference -- "$f" "$RUN/lock/"
+done
+if [ -n "${FV_TEST_HOOK_LOCK_SWAP:-}" ]; then cp -- "$FV_TEST_HOOK_LOCK_SWAP" "$lock"; fi   # a genuine lock put back for the check
+ln -s "lock/$(basename "$lock")" "$RUN/lock.manifest"
 verify_tree() { # verify_tree DIR: DIR holds every locked file with its locked sha256
   (cd "$1" && sha256sum --check --quiet --strict "$RUN/lock.manifest") > /dev/null 2>&1
 }
@@ -76,7 +88,7 @@ verify_tree() { # verify_tree DIR: DIR holds every locked file with its locked s
 expect=(); [ -n "$expect_fp" ] && expect=(--expect-fingerprint "$expect_fp")
 (
   rc=0
-  "$HERE/spec_lock.sh" check "$proj" "$lock" "${expect[@]}" || rc=$?
+  "$HERE/spec_lock.sh" check "$proj" "$LOCKC" "${expect[@]}" || rc=$?
   if [ "$rc" -eq 0 ] && [ -n "$git_base" ]; then
     changed=$(git -C "$proj" diff --name-only "$git_base" -- . ":(exclude)$FV_SOLUTION_REL" ; \
               git -C "$proj" ls-files --others --exclude-standard -- . ":(exclude)$FV_SOLUTION_REL")
@@ -90,7 +102,6 @@ grep -m1 '^SIGNER ' "$RUN/stages/lock.log" > "$RUN/signer.txt" || echo "SIGNER p
 echo "SPEC-LOCK $(cat "$RUN/signer.txt")"
 grep -q 'match=yes' "$RUN/signer.txt" || grep -E '^!!!' "$RUN/stages/lock.log" || true
 note "run dir $RUN"
-[ "$lock_rc" -eq 0 ] && ! cmp -s "$lock" "$RUN/lock.manifest" && { echo "BLOCKED: the lock file changed during the check" >> "$RUN/stages/lock.log"; lock_rc=2; }
 [ "$lock_rc" -eq 0 ] && stage_set lock PASS || {
   rc=$lock_rc
   cat "$RUN/stages/lock.log"
@@ -103,13 +114,17 @@ if "$HERE/solution_lint.sh" "$proj" > "$RUN/stages/lint.log" 2>&1; then stage_se
 else stage_set lint FAIL; fi
 
 # ---- the held-out copy -----------------------------------------------------------------------
-# The locked files are copied once, right after the check, into a content-addressed store named by the
+# The locked files are copied once, after the check and the lint, into a content-addressed store named by the
 # manifest's digest, made read-only, and verified against the manifest; the gate stages only from there,
 # never again from the working tree (a writer between the check and the copy is caught here, BLOCKED).
 if [ -n "${FV_TEST_HOOK_GATE_EDIT:-}" ]; then printf '\n-- FV_TEST_HOOK_GATE_EDIT\n' >> "$proj/$FV_TEST_HOOK_GATE_EDIT"; fi
 STORE_DIR="${FV_LOCK_STORE:-$FV_ROOT/lock-store}"   # FV_LOCK_STORE: another store (controls)
 STORE="$STORE_DIR/$(sha256sum < "$RUN/lock.manifest" | cut -d' ' -f1)"
 {
+  # An entry that no longer matches its manifest (corrupted, emptied, a half-written copy) is moved aside and rebuilt.
+  if [ -e "$STORE" ] && ! { [ -d "$STORE" ] && verify_tree "$STORE"; }; then
+    echo "the store entry $STORE does not match the lock: moved aside, rebuilt"; mv -T -- "$STORE" "$STORE.bad.$(date +%s).$$"
+  fi
   if [ ! -d "$STORE" ]; then
     mkdir -p "$STORE_DIR"; tmp=$(mktemp -d "$STORE_DIR/.new.XXXXXX")
     (cd "$proj" && cut -d' ' -f3- "$RUN/lock.manifest" | tr '\n' '\0' | xargs -0 cp --parents -t "$tmp")
@@ -132,6 +147,8 @@ stage_tree() { # stage_tree DEST WITH_SOLUTION
     mkdir -p "$dest/$FV_SOLUTION_REL"
     (cd "$proj" && find "$FV_SOLUTION_REL" -type f -name '*.lean' -print0 | xargs -0 -r cp --parents -t "$dest")
   fi
+  # What this tree holds beyond the locked files, hashed as staged (gate_inner.sh re-checks both before each build).
+  (cd "$dest" && find "$FV_SOLUTION_REL" -type f -print0 2>/dev/null | LC_ALL=C sort -z | xargs -0 -r sha256sum) > "$RUN/staged-$(basename "$dest").manifest"
 }
 stage_tree "$RUN/trusted" no
 stage_tree "$RUN/full" yes
