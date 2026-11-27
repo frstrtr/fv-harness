@@ -20,12 +20,14 @@ NO	PASS	classify/c75f_describe_raises/run/fuzz.json	classes: error the classific
 OK	PASS	fuzz/c108/hooked/fuzz.json	classes: 36 classes
 OK	PASS	fuzz/c108_small/run/fuzz.json	classes: 36 classes
 OK	FAIL	fuzz/c10_leak_class/run/fuzz.json	classes: 5 classes
-NO	FAIL	fuzz/c112 out/a run/fuzz.json	classes: error retention: the generation exited 77: ==3466352== ERROR: libFuzzer: deadly signal
+NO	FAIL	fuzz/c112 out/a run/fuzz.json	classes: error retention: the generation exited 77: ==3945226== ERROR: libFuzzer: deadly signal
 OK	PASS	fuzz/c112b/run/fuzz.json	classes: 36 classes
 OK	PASS	fuzz/c113/run/fuzz.json	classes: 36 classes
 NO	ERROR	fuzz/c116asan/run/fuzz.json	classes: no record
+NO	ERROR	fuzz/c116exit/run/fuzz.json	classes: no record
 NO	ERROR	fuzz/c116leak/run/fuzz.json	classes: no record
 NO	ERROR	fuzz/c116trap/run/fuzz.json	classes: no record
+NO	ERROR	fuzz/c116ubsan/run/fuzz.json	classes: no record
 OK	FAIL	fuzz/c11_hang/run/fuzz.json	classes: 5 classes
 OK	FAIL	fuzz/c12_growth/run/fuzz.json	classes: 5 classes
 OK	FAIL	fuzz/c13_classify_env/run/fuzz.json	classes: 5 classes
@@ -65,9 +67,9 @@ NO	ERROR	fuzz/c65/f/run/fuzz.json	classes: no record
 NO	ERROR	fuzz/c65/g/run/fuzz.json	classes: no record
 OK	FAIL	fuzz/c6_cpp_drift/run/fuzz.json	classes: 5 classes
 OK	FAIL	fuzz/c7_lsan_leak/run/fuzz.json	classes: 5 classes
-NO	FAIL	fuzz/c89_retain_artifact/run/fuzz.json	classes: error retention: the generation exited 77: ==3465590== ERROR: libFuzzer: deadly signal
+NO	FAIL	fuzz/c89_retain_artifact/run/fuzz.json	classes: error retention: the generation exited 77: ==3944389== ERROR: libFuzzer: deadly signal
 NO	FAIL	fuzz/c8_vendored_tamper/run/fuzz.json	classes: no record
-NO	PASS	fuzz/c90a_retain_guard/run/fuzz.json	classes: error retention: the generation stopped after 1223 of 200000 executions (time guard): not reproducible
+NO	PASS	fuzz/c90a_retain_guard/run/fuzz.json	classes: error retention: the generation stopped after 1075 of 200000 executions (time guard): not reproducible
 NO	PASS	fuzz/c90b_no_classify/run/fuzz.json	classes: skipped
 OK	PASS	fuzz/c9_edge_not_exercised/run/fuzz.json	classes: 36 classes
 NO	ERROR	fuzz/multihost/c43_killed/run/fuzz.json	classes: no record

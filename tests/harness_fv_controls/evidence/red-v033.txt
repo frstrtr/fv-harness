@@ -1,7 +1,22 @@
-# v0.3.3 reds: each control run against the code without its feature (gate host, cores 12-15).
-# c115 (d), (e): this release's gate with the lock read in place, the run directory reused and lock.manifest written through; (f): CLOSE without reading the gate's hooks (286d4a6)
-c115_gate_held_out     WRONG  (d) exit=2 lock=PASS trusted=none; (e) exit=0 target=[fde850d24186b6e99c8c0debd641fb3ab85198b1]; (f) close exit=1 [KeyError: 'cmake_dir']; 
-# c116: the narrow stop rule (signals and libFuzzer's own deadly-signal / timeout / out-of-memory / leak lines only), the hook kept (6aa7b02; run_fuzz.sh unchanged since)
-c116_retain_uncaptured WRONG (asan) exit=0 {"verdict":"PASS","detail":"no mismatch"}; (leak) exit=0 {"verdict":"PASS","detail":"no mismatch"}; 
-# Note on c115 (d)'s red: the lock stage passed the swapped-in file (lock=PASS, signer match=yes); the run was then
-# BLOCKED by the held-out stage ("no held-out copy matches the lock"), a later layer, never at the lock as required.
+# v0.3.3 reds: each control run against the code without its feature (gate host, cores 12-15, 47b5dee with the
+# feature removed and the test hooks kept). WRONG is the expected result here.
+# RA: no held-out store (staged from the working tree) and no re-hash of the staged trees: c115 (a)-(c)
+c115_gate_held_out     WRONG  (a) exit=0 held_out=PASS trusted=staged; (b) exit=0 staged=PASS hook-line-in-staged=<run>/c115b/run/trusted/spec/challenge/Challenge.lean; (c) exit=0 staged=PASS later stages: [./comparator_export.status ./comparator_native.status ./con_leche.status ./con_leche_compare.status ./con_ron.status ./config.status ./export.status ./netns.status ]; 
+# RB: the lock copies neither tested again nor re-hashed, the lint on the project and the solution staged from the
+# project (the order before v0.3.3), gate_inner.sh's re-checks removed: c115 (g), (h), c117, c118
+c115_gate_held_out     WRONG  (g) exit=123 held_out=[cp: cannot stat '': No such file or directory]; (h) exit=0 lock=PASS [SIGNER principal=fixture-only@fv-harness fingerprint=SHA256:R6l4wkshUPWT3e1nrbQy]; 
+c117_lint_staged_copy  WRONG  (a) exit=0 lint=PASS staged=PASS later=[./comparator_export.status ./comparator_native.status ./con_leche.status ./con_leche_compare.status ./con_ron.status ./config.status ./export.status ./netns.status ]; (b) exit=0 #eval-in-staged=<run>/c117b/run/full/spec/solution/Solution.lean; 
+c118_inner_rechecks    WRONG  (a) exit=0 staged=PASS [RED: no re-check]; (b) exit=0 staged=PASS [RED: no re-check]; (c) exit=0 staged=PASS [RED: no re-check]; (d) exit=0 staged=PASS [RED: no re-check]; (e) exit=0 staged=PASS [RED: no re-check]; (f) exit=0 staged=PASS [RED: no re-check]; 
+# (g)'s red exits 123 without a verdict: the edited copy's empty line reached the store's file list. On the release
+# code the edit is BLOCKED before that, and a signed manifest cannot hold such a line (the content check is an exact
+# diff against the manifest the tree produces).
+# The round-2 reds of c115 (d)-(f), on 286d4a6 (the lock read in place, the run directory reused and lock.manifest
+# written through, CLOSE not reading the gate's hooks):
+c115_gate_held_out     WRONG  (d) exit=2 lock=PASS trusted=none; (e) exit=0 target=[fde850d24186b6e99c8c0debd641fb3ab85198b1]; (f) close exit=1 [KeyError: 'cmake_dir'];
+# (d): the lock stage passed the swapped-in file (lock=PASS); a later layer, the held-out stage, blocked it, never
+# the lock as required. (f): CLOSE went past both refusals and stopped on the fixture's missing build directory.
+# RF: the narrow stop rule (signals and libFuzzer's own deadly-signal / timeout / out-of-memory / leak lines only), the
+# hook kept: c116 (b)-(e); (a), a trap, is a signal and was a stop under that rule too
+c116_retain_uncaptured WRONG (asan) exit=0 {"verdict":"PASS","detail":"no mismatch"}; (leak) exit=0 {"verdict":"PASS","detail":"no mismatch"}; (ubsan) exit=0 {"verdict":"PASS","detail":"no mismatch"}; (exit) exit=0 {"verdict":"PASS","detail":"no mismatch"}; 
+# RC: run_fuzz.sh as at 6380d5d (a reproducer counted only as retain-*): c74
+c74_retention_replay_fails WRONG run 1: exit=1 [retention replay (class-guided inputs, seed 1, 200000 executions) failed: oracle/implementation mismatch (no reproducer ] artifact=[mismatch-ad7ec6bedd93c88c]; run 2: exit=1 [retention replay (class-guided inputs, seed 1, 200000 executions) failed: oracle/implementation mismatch (no reproducer ] artifact=[mismatch-ad7ec6bedd93c88c]; run 3: exit=1 [retention replay (class-guided inputs, seed 1, 200000 executions) failed: oracle/implementation mismatch (no reproducer ] artifact=[mismatch-ad7ec6bedd93c88c];  signatures: mismatch-ad7ec6bedd93c88c e98ba8af70dfe8e2 mismatch-ad7ec6bedd93c88c e98ba8af70dfe8e2 mismatch-ad7ec6bedd93c88c e98ba8af70dfe8e2
