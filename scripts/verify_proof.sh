@@ -148,7 +148,12 @@ stage_tree() { # stage_tree DEST WITH_SOLUTION
     (cd "$proj" && find "$FV_SOLUTION_REL" -type f -name '*.lean' -print0 | xargs -0 -r cp --parents -t "$dest")
   fi
   # What this tree holds beyond the locked files, hashed as staged (gate_inner.sh re-checks both before each build).
-  (cd "$dest" && find "$FV_SOLUTION_REL" -type f -print0 2>/dev/null | LC_ALL=C sort -z | xargs -0 -r sha256sum) > "$RUN/staged-$(basename "$dest").manifest"
+  # The trusted tree has no solution directory: its staged manifest is empty (find on a missing path would stop the
+  # gate under pipefail before the verdict).
+  : > "$RUN/staged-$(basename "$dest").manifest"
+  if [ -d "$dest/$FV_SOLUTION_REL" ]; then
+    (cd "$dest" && find "$FV_SOLUTION_REL" -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum) > "$RUN/staged-$(basename "$dest").manifest"
+  fi
 }
 stage_tree "$RUN/trusted" no
 stage_tree "$RUN/full" yes
