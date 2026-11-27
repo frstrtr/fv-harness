@@ -54,7 +54,18 @@ The pipeline:
   - New stages: `held_out` and `staged`. Two test hooks (`FV_TEST_HOOK_GATE_EDIT`,
     `FV_TEST_HOOK_GATE_EDIT_STAGED`) simulate the writer for control c115; any hook set is recorded in
     `verdict.json` (`test_hooks`), and CLOSE refuses the run.
-- **Upgrading from v0.3.2:** nothing to change. The first gate run of a lock creates its store entry.
+- **A retention stop is never lost, and never passes.** v0.3.2's public CI showed that on Ubuntu 24.04 (clang 18),
+  libFuzzer can die inside its own crash handler (AddressSanitizer `CHECK failed: asan_report.cpp:198`, exit 139)
+  before writing the input it stopped on, so the stop was not replayed and the run passed (c89, c112 there).
+  - The C++ classify build now writes each input to `FV_CLASSIFY_RETAIN_CURRENT` before running it; a stop libFuzzer
+    could not record is taken from there and replayed by the verdict binary. If the verdict binary also dies without
+    a reproducer, the stop input is kept as the reproducer and the detail says so.
+  - Fail closed: a generation that stopped on an input with nothing captured is ERROR, never PASS (c116, through a
+    hook that makes the artifact directory unwritable and turns the recording off).
+  - CI uploads the fuzz records and the retention logs.
+- **Upgrading from v0.3.2:** the first gate run of a lock creates its store entry. `fuzz/diff_oracle_template.cpp`
+  changed: a project that vendors it re-vendors from v0.3.3 (`fuzz/VENDORED.sha256` has the v0.3.3 lines); an older
+  copy still works, and on clang 18 a retention stop is then ERROR instead of replayed.
 
 ## Changes in v0.3.2
 
