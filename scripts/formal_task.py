@@ -297,11 +297,25 @@ def cmd_discharge(a):
     return 0
 
 
+def gate_block_cause(verdict: dict) -> str:
+    """Why verify_proof.sh exited 2, from the stage that blocked (no verdict.json: the run directory existed)."""
+    if not verdict:
+        return "no verdict (the run directory already existed, or the gate stopped before writing one)"
+    stages = verdict.get("stages", {})
+    if stages.get("lock") == "BLOCKED":
+        return "the spec lock check failed (signature, signer pin or locked content)"
+    if stages.get("held_out") == "BLOCKED":
+        return "the trusted files or the gate's lock copy changed during the gate (no held-out copy matches the lock)"
+    if stages.get("staged") == "BLOCKED":
+        return "a staged tree or the gate's solution copy changed during the gate"
+    return "blocked (" + " ".join(f"{k}={v}" for k, v in sorted(stages.items()) if v == "BLOCKED") + ")"
+
+
 def cmd_audit(a):
     t = Task(a.task); st = t.load(); guard(st, "audit")
     n = sum(1 for h in st["history"] if h.get("from") == "AUDIT") + 1
     run = t.dir / f"audit-{n}"
-    while run.exists():   # the gate needs a fresh run directory (an earlier attempt may have left one)
+    while os.path.lexists(run):   # the gate needs a fresh run directory (an earlier attempt may have left one, or a link)
         n += 1; run = t.dir / f"audit-{n}"
     rc = run_logged([str(HARNESS / "scripts/verify_proof.sh"), "--project", st["project"], "--lock", st["lock"],
                      "--out", str(run)], t.dir / f"audit-{n}.log")
@@ -312,7 +326,7 @@ def cmd_audit(a):
                verdict=str(run / "verdict.json"))
         return 0
     if rc == 2:
-        t.move(st, "BLOCKED", "gate BLOCKED: trusted files changed", verdict=str(run / "verdict.json"))
+        t.move(st, "BLOCKED", "gate BLOCKED: " + gate_block_cause(verdict), verdict=str(run / "verdict.json"))
         return NEEDS_HUMAN
     if rc == 1:
         failed = [k for k, v in verdict.get("stages", {}).items() if v == "FAIL"]

@@ -28,14 +28,26 @@ check_tree() { # check_tree TREE BUILT(0|1) STEP
   [ -z "$extra" ] || { echo "BLOCKED: staged tree $1 has files the staging did not put there before $3: $(echo $extra | cut -c1-200)"; return 1; }
   [ "$2" = 1 ] || [ ! -e "$d/.lake" ] || { echo "BLOCKED: staged tree $1 has a .lake before its first build ($3)"; return 1; }
 }
+inner_hook() { # FV_TEST_HOOK_INNER=STEP:ACTION:TREE[:REL] (controls only; verify_proof.sh records it): a writer in the run
+  local step act tree rel
+  [ -n "${FV_TEST_HOOK_INNER:-}" ] || return 0
+  IFS=: read -r step act tree rel <<< "$FV_TEST_HOOK_INNER"
+  [ "$step" = "$1" ] || return 0
+  case "$act" in
+    edit) chmod u+w "$RUN/$tree/$rel"; printf '\n-- FV_TEST_HOOK_INNER\n' >> "$RUN/$tree/$rel" ;;
+    plant) mkdir -p "$(dirname "$RUN/$tree/$rel")"; echo "-- FV_TEST_HOOK_INNER" > "$RUN/$tree/$rel" ;;
+    lake) mkdir -p "$RUN/$tree/.lake/build" ;;
+  esac
+}
 check_trees() { # check_trees STEP TREE:BUILT ...
   local step="$1" tb; shift
+  inner_hook "$step"
   for tb in "$@"; do
     if ! check_tree "${tb%%:*}" "${tb#*:}" "$step" > "$RUN/stages/staged.log" 2>&1; then stage_set staged BLOCKED; exit 0; fi
   done
   echo "every staged tree matches the lock and its staging (last check: before $step)" > "$RUN/stages/staged.log"
 }
-check_trees "the audit" trusted:0 full:0 native:0
+check_trees audit trusted:0 full:0 native:0
 
 # ---- provenance ------------------------------------------------------------------------------
 {
