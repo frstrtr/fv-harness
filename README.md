@@ -47,8 +47,13 @@ The pipeline:
     copied them from the project into its run directory without hashing the copies; it also checked the lock file
     in place, so a lock swapped during the check, or a run directory prepared beforehand, could feed it other content.
   - Now the run directory must be new (an existing `--out` is BLOCKED). The lock, its signature and its allowed
-    signers are copied into it (never through a symbolic link), and the signature, the content check, the staging
-    and the verdict's digest all read those copies.
+    signers are copied into it (never through a symbolic link; each copy is tested again after the copy, so a link
+    put in place meanwhile is BLOCKED), and the signature, the content check, the staging and the verdict's digest
+    all read those copies, re-hashed before use. An unreadable lock file is ERROR, with a verdict.
+  - `spec/solution` is copied once into the run directory, and hashed. The lint reads that copy, and the full and
+    native trees are built from it, checked again before each use. Before, the lint read the project and the
+    solution was copied from the project twice afterwards, so a prover racing the gate could pass the lint with
+    one file and have another built.
   - After the check and the lint, the locked files are copied into a content-addressed store
     (`$FV_ROOT/lock-store/<manifest sha256>`, or `FV_LOCK_STORE`), their files made read-only, and verified against the
     manifest; a copy that differs is BLOCKED; an entry that no longer matches is moved aside and rebuilt.
@@ -56,24 +61,29 @@ The pipeline:
     step that reads a tree (comparator, exports), every locked and staged file is re-hashed and any file the staging
     did not put there (or a `.lake` before the tree's first build) is BLOCKED. A writer with the gate's own user id
     can still race the steps themselves; that residual is documented.
-  - New stages: `held_out` and `staged`. Test hooks (`FV_TEST_HOOK_GATE_EDIT`, `FV_TEST_HOOK_GATE_EDIT_STAGED`,
-    `FV_TEST_HOOK_LOCK_SWAP`) simulate the writer for control c115; any hook set is recorded in `verdict.json`
-    (`test_hooks`), and CLOSE refuses the run.
+  - New stages: `held_out` and `staged`. Test hooks (`FV_TEST_HOOK_GATE_EDIT`, `_GATE_EDIT_STAGED`, `_LOCK_SWAP`,
+    `_LOCK_LINK`, `_LOCK_COPY_EDIT`, `_LINT_SWAP`, `_INNER`) simulate the writer for controls c115, c117 and c118;
+    any hook set is recorded in `verdict.json` (`test_hooks`), and CLOSE refuses the run.
+  - `formal_task.py audit` names the stage that blocked (the lock check, the held-out copy, a staged tree) instead
+    of "trusted files changed".
 - **A retention stop is never lost, and never passes.** v0.3.2's public CI showed that on Ubuntu 24.04 (clang 18),
   libFuzzer can die inside its own crash handler (AddressSanitizer `CHECK failed: asan_report.cpp:198`, exit 139)
   before writing the input it stopped on, so the stop was not replayed and the run passed (c89, c112 there).
   - The C++ classify build now writes each input to `FV_CLASSIFY_RETAIN_CURRENT` before running it; a stop libFuzzer
     could not record is taken from there and replayed by the verdict binary. If the verdict binary also dies without
-    a reproducer, the stop input is kept as the reproducer and the detail says so.
+    a reproducer, every input of that replay is kept as a candidate and the detail says so; any file the replay
+    writes other than a slow unit (libFuzzer's `retain-*`, the oracle's `mismatch-<hash>`) is the reproducer.
   - Fail closed: any non-zero exit of the generation (a signal, a sanitizer report, a leak, "fuzz target exited")
     other than the classify build's own refusal is a stop, and a stop with nothing captured is ERROR, never PASS
-    (c116: a trap, an AddressSanitizer report and a LeakSanitizer report, through a hook that makes the artifact
-    directory unwritable and turns the recording off).
+    (c116: a trap, an AddressSanitizer, a LeakSanitizer and an UndefinedBehaviorSanitizer report, and the target
+    calling `exit()`, through a hook that makes the artifact directory unwritable and turns the recording off).
   - CI uploads the fuzz records and the retention logs.
 - **On a clang 18 host, the main campaign** can lose a finding's input the same way: libFuzzer dies inside its
   crash handler before writing the reproducer. The run is still FAIL (the death is a finding) or ERROR, never PASS,
   but the mutated input that triggered it is not kept; re-run on a host with a newer clang to get the reproducer.
-- **Upgrading from v0.3.2:** the first gate run of a lock creates its store entry. `fuzz/diff_oracle_template.cpp`
+- **Upgrading from v0.3.2:** `verify_proof.sh --out` must name a directory that does not exist yet (an existing one
+  is BLOCKED; `formal_task.py` already picks a fresh one). The first gate run of a lock creates its store entry.
+  `fuzz/diff_oracle_template.cpp`
   changed: a project that vendors it re-vendors from v0.3.3 (`fuzz/VENDORED.sha256` has the v0.3.3 lines); an older
   copy still works, and on clang 18 a retention stop is then ERROR instead of replayed.
 
@@ -295,7 +305,9 @@ A verified project is a Lake project with:
 | Stage | Check | Catches |
 |---|---|---|
 | `lock` | `LOCK.sig` verifies, its signer matches the pinned fingerprint, and the trusted files equal the manifest (optional `--git-base` diff gate). Failure means BLOCKED and nothing is audited | Edits to the challenge or build config; a lock rewritten without the operator's key |
-| `lint` | No sorry/admit/axiom/native_decide/extern/implemented_by/metaprogramming; files ≤ 1000 lines; only `Solution*.lean` | Policy violations, early |
+| `held_out` | The locked files, copied once into a read-only content-addressed store and verified against the manifest; every tree is staged from there | A writer changing the trusted files after the check |
+| `staged` | Every staged tree (and the gate's one copy of the solution) re-hashed right before the builds and before every audit step that reads it; no unlisted file, no `.lake` before the first build | A writer in the run directory between the gate's steps |
+| `lint` | On the gate's copy of `spec/solution`: no sorry/admit/axiom/native_decide/extern/implemented_by/metaprogramming; files ≤ 1000 lines; only `Solution*.lean` | Policy violations, early |
 | `netns` | The audit runs in a fresh network namespace (`sudo unshare --net`, then setpriv back to the user) | Network access during verification |
 | `comparator_native` | `lake comparator --paranoid`: Lake builds and exports in bwrap, compares statements structurally, checks the axiom whitelist, then runs leanchecker, leanchecker-paranoid, lean4lean, nanoda, con-leche and con-ron | Weakened or shadowed statements, axioms, kernel bugs |
 | `export` | The gate's own bwrap builds. The challenge comes from a solution-free tree. Writes inert NDJSON exports | Solutions that do not build |
@@ -350,6 +362,13 @@ What remains is detective:
 - The signer fingerprint printed first in every report would differ from the operator's.
 - The pin change is a visible diff in `config/signer_pins.txt`.
 - The control suite compares against a recorded constant (control `c5d_key_swap`).
+
+**The run directory has the same limit.** The gate and the prover run as one OS user on the reference host, so a
+process of that user can edit the run directory between a check and the read it guards. v0.3.3 narrows that window:
+the lock files are copied once and tested again after the copy, the locked files come from a read-only store, the
+solution is copied once, and every copy is re-hashed right before each step that reads it. Within a step (between
+the last check and the read itself), and for a writer who also edits the gate's own records, nothing in-band can
+close it; only a separate user for the gate would.
 
 **The final assurance is the operator's ten-second check:** the fingerprint on the first line of
 each CLOSE report must equal the one they stated. A report whose fingerprint differs is void.
