@@ -457,7 +457,11 @@ fi
 # execution and the fixture corpus do not reach it, the retention generation does and stops there: the verdict binary must replay that input, so
 # the run FAILs with it kept, not PASS with only a classifier error.
 V89="$OUT/c89_fuzzdir"; rm -rf "$V89"; mkdir -p "$V89"; cp -r "$CPP"/. "$V89"/
-sed -i 's|  return Op{fvfuzz::pick_u64(in), fvfuzz::pick_u64(in)};|  Op o{fvfuzz::pick_u64(in), fvfuzz::pick_u64(in)}; if (o.amt == 10000 \&\& o.bps == 10000) __builtin_trap();  // c89\n  return o;|' "$V89/binding.hpp"
+# abort(), not __builtin_trap(): with clang 18's AddressSanitizer a SIGILL inside the fuzzer kills the process inside
+# libFuzzer's crash handler (ASan "CHECK failed: asan_report.cpp:198") before the input is written, so there is
+# nothing to replay. The harness then reports ERROR (c116); this control tests the replay of a captured stop.
+sed -i 's|  return Op{fvfuzz::pick_u64(in), fvfuzz::pick_u64(in)};|  Op o{fvfuzz::pick_u64(in), fvfuzz::pick_u64(in)}; if (o.amt == 10000 \&\& o.bps == 10000) std::abort();  // c89\n  return o;|' "$V89/binding.hpp"
+sed -i '1i #include <cstdlib>' "$V89/binding.hpp"
 sed -i 's/^retain_runs = .*/retain_runs = 200000/' "$V89/fv.toml"
 grep -q '// c89' "$V89/binding.hpp" || echo "c89 setup: generator line not found" >&2
 CMAKE_DIR="$V89" campaign c89_retain_artifact --runs 1 --impl-dir "$ROOT/fixtures/conservation_cpp/impl"
@@ -481,8 +485,7 @@ c112() { # c112 FUZZDIR RUNDIR CORPUS
   "$ROOT/fuzz/run_fuzz.sh" --lean-project "$FIX" --lock "$LOCK" --cmake-dir "$1" --target diff_transfer --corpus "$3" \
     --no-merge --out "$2" --runs 1 --impl-dir "$ROOT/fixtures/conservation_cpp/impl" > "$2.out" 2>&1; }
 V112="$OUT/c112_fuzzdir"; rm -rf "$V112"; mkdir -p "$V112"; cp -r "$V89"/. "$V112"/   # c89's trap, only while FV_C112_TRAP is set
-sed -i 's|if (o.amt == 10000 \&\& o.bps == 10000) __builtin_trap();  // c89|if (o.amt == 10000 \&\& o.bps == 10000 \&\& std::getenv("FV_C112_TRAP")) __builtin_trap();  // c112|' "$V112/binding.hpp"
-sed -i '1i #include <cstdlib>' "$V112/binding.hpp"
+sed -i 's|if (o.amt == 10000 \&\& o.bps == 10000) std::abort();  // c89|if (o.amt == 10000 \&\& o.bps == 10000 \&\& std::getenv("FV_C112_TRAP")) std::abort();  // c112|' "$V112/binding.hpp"
 grep -q '// c112' "$V112/binding.hpp" || echo "c112 setup: trap line not found" >&2
 cp -r "$CPP/corpus" "$D112/corpus a"; FV_C112_TRAP=1 c112 "$V112" "$D112/a run" "$D112/corpus a"; ra=$?; ja="$D112/a run/fuzz.json"
 [ $ra -eq 1 ] && jq -e '(.detail | contains("retention replay")) and (.classes.retention.generation_artifacts | length) >= 1' "$ja" > /dev/null \

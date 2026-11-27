@@ -197,8 +197,8 @@ RETAIN_RUNS=$(cfg retain_runs 200000); RETAIN_SEED=$(cfg retain_seed 1); BAD_RET
 RETAIN_JSON=null
 # Test hooks (FV_TEST_HOOK_*): for controls only. Each one set is recorded in fuzz.json (test_hooks), and CLOSE
 # refuses such a run. Unset, no hook changes anything: every hook below is a no-op unless its variable is set.
-#   FV_TEST_HOOK_RETAIN_NO_ARTIFACT=1  the retention generation's artifact prefix is unwritable, so a stop leaves
-#     nothing behind (as on a host where libFuzzer dies inside its own crash handler)
+#   FV_TEST_HOOK_RETAIN_NO_ARTIFACT=1  the retention generation's artifact directory is not writable, so a stop
+#     leaves nothing behind (as with clang 18's ASan, where a SIGILL kills libFuzzer inside its crash handler)
 #   FV_TEST_HOOK_REPLAY_STATUS=retention|merge  (--lang tron-tvm) after that replay, append one forged "ready"
 #     observation (a driver that saw an interface other than lo), as a driver started in that replay would write
 #     it; the driver checks that follow that replay must then refuse the run.
@@ -950,9 +950,11 @@ retention() {
   find "$C" -maxdepth 1 -type f -name 'retain-artifact-*' -delete   # a reused --out: only this generation's stops count
   [ -d "$RUN/new_corpus" ] && src+=("$RUN/new_corpus")
   # The first directory receives libFuzzer's own new units (W, discarded); -reload=0: no timed re-reads.
+  # The hook: an artifact directory that exists (libFuzzer checks that at start) but cannot be written.
+  [ -z "${FV_TEST_HOOK_RETAIN_NO_ARTIFACT:-}" ] || { mkdir -p "$C/ro" && chmod a-w "$C/ro"; }
   FV_CLASSIFY=/dev/null FV_CLASSIFY_RETAIN="$K" $CAP_CLS "$BIN_CLS" "${LIMITS[@]}" "${LENS[@]}" -seed="$RETAIN_SEED" \
     -runs="$RETAIN_RUNS" -use_value_profile=1 -reload=0 -max_total_time="${FV_RETAIN_GUARD_S:-3600}" \
-    -artifact_prefix="${FV_TEST_HOOK_RETAIN_NO_ARTIFACT:+/proc/fv-unwritable/}$C/retain-artifact-" "$W" "${src[@]}" > "$C/retain.log" 2>&1
+    -artifact_prefix="$C/${FV_TEST_HOOK_RETAIN_NO_ARTIFACT:+ro/}retain-artifact-" "$W" "${src[@]}" > "$C/retain.log" 2>&1
   rc=$?
   done_=$(grep -oE '^Done [0-9]+ runs' "$C/retain.log" | tail -1 | grep -oE '[0-9]+')  # libFuzzer, once -runs is reached
   [ -n "$done_" ] || done_=$(grep -oE '^#[0-9]+' "$C/retain.log" | tail -1 | tr -d '#')
