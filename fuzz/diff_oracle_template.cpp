@@ -208,8 +208,13 @@ static void keep_current(const uint8_t* data, size_t size) {
     fd = (p && *p) ? ::open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644) : -1;
   }
   if (fd < 0) return;
-  (void)!::ftruncate(fd, 0);
-  (void)!::pwrite(fd, data, size, 0);
+  // The input first, then the length: a stop between the two leaves a file that is not this input, so a short
+  // write (disk full) turns the recording off and removes the file: no false input is ever kept.
+  const ssize_t w = ::pwrite(fd, data, size, 0);
+  if (w != static_cast<ssize_t>(size) || ::ftruncate(fd, static_cast<off_t>(size)) != 0) {
+    ::close(fd); fd = -1;
+    if (const char* p = std::getenv("FV_CLASSIFY_RETAIN_CURRENT")) ::unlink(p);
+  }
 }
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {

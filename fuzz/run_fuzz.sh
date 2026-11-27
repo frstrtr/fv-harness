@@ -974,20 +974,22 @@ retention() {
   # that is a finding; if not, the stop was the classifier's own (a describe() or predicate that raised).
   local A="$C/retain-replay-set" arts nk na f
   rm -rf "$A"; mkdir -p "$A"
+  # Any non-zero exit of the generation is a stop on an input (a signal, libFuzzer's crash / timeout / OOM, an
+  # AddressSanitizer / UndefinedBehaviorSanitizer / LeakSanitizer report, "fuzz target exited", an uncaught Python
+  # exception, a Rust panic), except the classify build's own refusal (exit 3, "CLASSIFY ERROR": a classes file that
+  # does not load, a describe() that sends a transaction), which is a classification error, not an input.
+  local stop=0
+  [ $rc -ne 0 ] && ! { [ $rc -eq 3 ] && grep -q 'CLASSIFY ERROR' "$C/retain.log"; } && stop=1
+  have_art() { [ -n "$(find "$C" -maxdepth 1 -type f -name 'retain-artifact-*' ! -name '*slow-unit-*' -print -quit)" ]; }
   # A stop libFuzzer could not record (its crash handler died first: clang 18's ASan) is recorded from retain-current,
-  # the input the classify build was running.
-  if [ $rc -ne 0 ] && [ -s "$C/retain-current" ] \
-     && [ -z "$(find "$C" -maxdepth 1 -type f -name 'retain-artifact-*' ! -name '*slow-unit-*' -print -quit)" ] \
-     && { [ $rc -gt 128 ] || grep -qE 'ERROR: libFuzzer: (deadly signal|timeout|out-of-memory|.*leak)' "$C/retain.log"; }; then
+  # the input the classify build was running (an empty input too).
+  if [ $stop = 1 ] && [ -f "$C/retain-current" ] && ! have_art; then
     cp -- "$C/retain-current" "$C/retain-artifact-current-$(sha1sum < "$C/retain-current" | cut -c1-40)"
   fi
-  # Fail closed: a generation that stopped on an input (a signal, libFuzzer's crash / timeout / OOM / leak, an
-  # uncaught Python exception, a Rust panic) must have left that input behind, or it can never be compared. A
-  # stop with nothing captured (libFuzzer killed inside its own handler, an unwritable artifact path) is ERROR,
-  # never a PASS. A classify error before any input (exit 3, "CLASSIFY ERROR") is not an input stop.
-  if [ $rc -ne 0 ] && [ -z "$(find "$C" -maxdepth 1 -type f -name 'retain-artifact-*' ! -name '*slow-unit-*' -print -quit)" ] \
-     && { [ $rc -gt 128 ] || grep -qE 'ERROR: libFuzzer: (deadly signal|timeout|out-of-memory|.*leak)|Uncaught Python exception|panicked' "$C/retain.log"; }; then
-    verdict 3 ERROR "the retention generation stopped on an input that was not captured (exit $rc: $(grep -m1 -E 'ERROR: libFuzzer|Uncaught|panicked' "$C/retain.log" | cut -c1-120)), so it was never compared"
+  # Fail closed: a stop must have left its input behind, or it can never be compared. A stop with nothing captured
+  # (libFuzzer killed inside its own handler and no recording, an unwritable artifact path) is ERROR, never a PASS.
+  if [ $stop = 1 ] && ! have_art; then
+    verdict 3 ERROR "the retention generation stopped on an input that was not captured (exit $rc: $(grep -m1 -E 'ERROR|Uncaught|panicked|fuzz target exited' "$C/retain.log" | cut -c1-120)), so it was never compared"
   fi
   arts=$(find "$C" -maxdepth 1 -type f -name 'retain-artifact-*' ! -name '*slow-unit-*' -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')
   nk=0; na=0
@@ -1012,12 +1014,13 @@ retention() {
   if [ $rr -ne 0 ]; then
     executor_verdict "$RUN/retain-replay.log"
     cat "$RUN/retain-replay.log" >> "$RUN/campaign.log"
-    # The verdict binary can die inside libFuzzer's crash handler too (clang 18's ASan) and leave no reproducer:
-    # the generation's stops, the only inputs replayed here that are not retained, are then kept as the reproducers.
+    # The verdict binary can die inside libFuzzer's crash handler too (clang 18's ASan) and leave no reproducer: every
+    # input this replay ran is then kept as a candidate (the failing one is among them; libFuzzer did not name it).
     local note=""
-    if [ -z "$(find "$RUN/artifacts" -maxdepth 1 -type f -name 'retain-*' -print -quit)" ] && [ -n "${arts// /}" ]; then
-      for a in $arts; do cp -- "$C/$a" "$RUN/artifacts/retain-${a#retain-artifact-}"; done
-      note=" (reproducer: the input the generation stopped on; libFuzzer could not write its own)"
+    if [ -z "$(find "$RUN/artifacts" -maxdepth 1 -type f -name 'retain-*' -print -quit)" ]; then
+      while IFS= read -r -d '' f; do cp -- "$f" "$RUN/artifacts/retain-candidate-$(basename "$f")"; done \
+        < <(find "$A" -maxdepth 1 -type f -print0)
+      note=" (no reproducer written by libFuzzer: the $n inputs this replay ran are kept as retain-candidate-*, the failing one among them)"
     fi
     keep_reproducers
     classify findings
